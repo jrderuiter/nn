@@ -2,8 +2,8 @@ profile: profile.json
 command: [claude]
 allow_cwd: true
 
-# wrappers:
-#   - [fnox, exec, --]
+wrappers:
+  - [fnox, exec, --]
 
 run:
   trust_proxy_ca: true
