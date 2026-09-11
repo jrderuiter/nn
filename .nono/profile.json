@@ -1,0 +1,16 @@
+{
+  "$schema": "./nono-profile.schema.json",
+  "meta": { "name": "claude-mise", "version": "1.0.0" },
+  "extends": "nolabs-ai/claude",
+  "groups": {
+    "include": ["go_runtime", "go_runtime_linux", "go_runtime_macos"]
+  },
+  "network": {
+    "network_profile": "claude-code",
+    "allow_domain": ["proxy.golang.org", "sum.golang.org"]
+  },
+  "filesystem": {
+    "read": ["$HOME/.local/share/mise", "$HOME/.config/mise", "$HOME/.config/gh/config.yml"],
+    "allow": ["$HOME/.local/state/mise", "$HOME/.cache/mise"]
+  }
+}

@@ -1,0 +1,84 @@
+[tools]
+go = "1.26.6"
+
+[env]
+# ~/go is not writable inside the nono sandbox, so keep GOPATH in-tree.
+# See .nono/profile.json — granting $HOME/go would let this be the default.
+GOPATH = "{{config_root}}/.gocache/gopath"
+GOMODCACHE = "{{config_root}}/.gocache/gopath/pkg/mod"
+
+[tasks.build]
+description = "Build bin/nn reproducibly"
+# Reproducible builds: identical source must give an identical binary.
+#   -trimpath      strips local filesystem paths (GOPATH, module cache) that
+#                  would otherwise differ between machines
+#   no wall clock  the stamped date is the SOURCE date, from SOURCE_DATE_EPOCH
+#                  or the commit, never `date` at build time
+# `nn version` falls back to the toolchain's embedded VCS stamps when these
+# are absent, so a `go install` build still identifies itself.
+run = """
+set -e
+if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
+  DATE=$(date -u -r "$SOURCE_DATE_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+      || date -u -d "@$SOURCE_DATE_EPOCH" +%Y-%m-%dT%H:%M:%SZ)
+else
+  DATE=$(TZ=UTC0 git log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)
+fi
+go build -trimpath -ldflags "\
+  -X main.version=$(git describe --tags --always --dirty 2>/dev/null || echo dev) \
+  -X main.commit=$(git rev-parse --short=12 HEAD 2>/dev/null || true) \
+  -X main.date=$DATE" \
+  -o "${OUT:-bin/nn}" ./cmd/nn
+"""
+sources = ["cmd/**/*.go", "internal/**/*.go", "go.mod", "go.sum"]
+outputs = ["bin/nn"]
+
+[tasks.repro]
+description = "Verify the build is byte-for-byte reproducible"
+run = """
+set -e
+d=$(mktemp -d)
+trap 'rm -rf "$d"' EXIT
+OUT="$d/a" mise run build
+OUT="$d/b" mise run build
+if cmp -s "$d/a" "$d/b"; then
+  echo "reproducible: $(shasum -a 256 "$d/a" | cut -d" " -f1)"
+else
+  echo "NOT reproducible:"
+  shasum -a 256 "$d/a" "$d/b"
+  exit 1
+fi
+"""
+
+[tasks.test]
+description = "Run the test suite"
+run = "go test ./..."
+
+[tasks.vet]
+description = "Vet, check formatting, and cross-compile"
+run = [
+  "go vet ./...",
+  # gofmt -l prints offenders and exits 0, so turn output into failure.
+  'test -z "$(gofmt -l cmd internal)" || { gofmt -l cmd internal; exit 1; }',
+  "GOOS=windows go build ./...",
+  "GOOS=linux go build ./...",
+]
+
+[tasks.check]
+description = "Everything CI would run"
+depends = ["vet", "test"]
+
+[tasks.install]
+description = "Install nn into PREFIX/bin (default ~/.local)"
+depends = ["build"]
+# GOPATH is redirected in-tree, so `go install` would hide the binary under
+# .gocache/. Copy the built binary to a real bin directory instead.
+run = [
+  'install -d "${PREFIX:-$HOME/.local}/bin"',
+  'install -m 0755 bin/nn "${PREFIX:-$HOME/.local}/bin/nn"',
+  'echo "installed ${PREFIX:-$HOME/.local}/bin/nn"',
+]
+
+[tasks.clean]
+description = "Remove build output"
+run = "rm -rf bin"
