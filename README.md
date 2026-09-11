@@ -8,12 +8,131 @@ fnox exec -- nono run --profile .nono/profile.json --allow-cwd --no-diagnostics 
 
 and type `nn` instead.
 
+## Getting started
+
+### 1. Install
+
+```sh
+go install github.com/jderuiter/nn/cmd/nn@latest
+```
+
+From a clone: `mise run install` puts it in `~/.local/bin` (override with
+`PREFIX`).
+
+### 2. Create a config
+
+In your project root:
+
+```sh
+nn init
+```
+
+That writes a commented `.nono/nn.yml`. Point it at a profile and say what to
+run — here, a built-in profile and a trivial command, so there is nothing to
+author yet:
+
+```yaml
+profile: go-dev
+command: [go, version]
+allow_cwd: true
+
+run:
+  trust_proxy_ca: true
+  no_diagnostics: true
+```
+
+`profile:` takes either a filename relative to `.nono/` (`profile.json`) or a
+profile name nono already knows. `nono profile list` shows what is available;
+`nono profile init <name>` creates your own.
+
+### 3. See what it will run
+
+Before running anything, check the command nn assembles:
+
+```console
+$ nn print
+nono run --profile go-dev --allow-cwd --trust-proxy-ca --no-diagnostics -- go version
+```
+
+That is the whole product: the config on the left, this line on the right. If it
+looks right, it is right.
+
+### 4. Check the pieces exist
+
+```console
+$ nn doctor
+  ok    config      /myproject/.nono/nn.yml
+  ok    config parses and validates
+  ok    nn run    builds
+  ok    nono        /opt/homebrew/bin/nono (nono 0.76.0)
+  ok    command     go version
+  ok    profile     go-dev (name, resolved by nono)
+  ok    nn shell  builds
+  ok    nn wrap   builds
+
+all good
+```
+
+`doctor` checks every link in the chain — the wrappers, nono itself, and the
+profile (via `nono profile validate`) — so a missing binary is named here rather
+than surfacing as an error from a process two levels down.
+
+### 5. Run it
+
+```sh
+nn
+```
+
+You can override the command without touching the config:
+
+```sh
+nn -- go test ./...      # replaces command:
+nn --append -- -race     # extends it
+```
+
+And it works from anywhere in the tree, because nn searches upward for
+`.nono/nn.yml`:
+
+```console
+$ cd src && nn print
+nono run --profile go-dev --allow-cwd --trust-proxy-ca --no-diagnostics -- go version
+```
+
+### 6. Add a wrapper, if you need one
+
+Secrets tools like [fnox](https://github.com/jdx/fnox) run *above* nono, so they
+cannot live in a profile. That is the other half of what nn is for:
+
+```yaml
+wrappers:
+  - [fnox, exec, --]
+```
+
+Each entry is a command prefix, used verbatim — it carries its own `--` if it
+needs one, because `direnv exec .` does not.
+
+### What if I put the wrong thing in?
+
+Most sandbox policy belongs in the profile, not here, and nn will say so:
+
+```console
+$ nn print
+nn: /myproject/.nono/nn.yml:
+[3:1] unknown field "allow_domain"
+   1 | profile: go-dev
+   2 | command: [go, build]
+>  3 | allow_domain: [proxy.golang.org]
+       ^
+
+`--allow-domain` is expressible in the nono profile — set network.allow_domain in your profile.json instead.
+nn only carries flags that a profile cannot express.
+```
+
 ## What it does, and what it deliberately doesn't
 
 Most sandbox policy belongs in nono's `profile.json`, and **nn does not duplicate
 any of it**. Filesystem grants, network policy, credentials, ports — all of that
-stays in the profile. Put one of those keys in `nn.yml` and nn will tell you
-where in the profile it lives instead.
+stays in the profile.
 
 nn exists for the two things a profile cannot reach:
 
@@ -21,22 +140,11 @@ nn exists for the two things a profile cannot reach:
    access *level*, but only the flag skips the prompt), `--no-diagnostics`,
    `--trust-proxy-ca`, `--detached`, `--skip-dir`, the rollback and audit
    family, and the `--allow-unix-socket-*` variants. 47 in total.
-2. **The outer wrapper** — `fnox exec --` runs *above* nono, so nono has no
+2. **The outer wrapper** — `fnox exec --` runs above nono, so nono has no
    concept of it.
 
 nn reads `.nono/nn.yml`, assembles the command line, and `exec`s it. It then
 disappears from the process tree.
-
-## Install
-
-```sh
-go install github.com/jderuiter/nn/cmd/nn@latest
-nn init          # writes a commented .nono/nn.yml
-nn doctor        # checks the config and every binary in the chain
-```
-
-From a clone, `mise run install` puts it in `~/.local/bin` (override with
-`PREFIX`).
 
 ## Configuration
 
@@ -66,9 +174,6 @@ wrap:                        # nn wrap — for scripts and CI
   command: [go, test, ./...]
 ```
 
-nn searches upward from the working directory for `.nono/nn.yml`, so it works
-from any subdirectory.
-
 ### Keys mirror nono's flags
 
 `--no-diagnostics` is `no_diagnostics`, `--trust-proxy-ca` is `trust_proxy_ca`.
@@ -92,7 +197,14 @@ asymmetry is the point:
 | in a `run:`/`shell:`/`wrap:` block | **hard error** — naming the block asserts it belongs there, so a mismatch is a typo |
 | at the top level | **ignored, and reported** — you meant it generally |
 
-That is what lets one file serve both `nn` and `nn wrap` without editing.
+That is what lets one file serve both `nn` and `nn wrap` without editing:
+
+```console
+$ nn wrap --print
+nn: note: not supported by `nono wrap`, ignored: trust_proxy_ca
+nono wrap --profile go-dev -- go build
+```
+
 Validation covers all three blocks whichever subcommand you run, so a typo in a
 block you rarely use surfaces now rather than in CI.
 
@@ -125,6 +237,7 @@ about to run, correcting the value herdr guessed from seeing `nn`. Opt out with
 | `nn print` | show the invocation without running it (`--format shell\|lines\|json`) |
 | `nn init` | write a commented starter config |
 | `nn doctor` | check the config, every binary in the chain, and the profile |
+| `nn version` | version, commit and source date |
 
 Everything after `--` is passed through untouched, so `nn -- go test -v` never
 lets nn's own parser see `-v`.
