@@ -1,14 +1,21 @@
 {
   "$schema": "./nono-profile.schema.json",
-  "meta": { "name": "claude-nn", "version": "1.0.0" },
   "extends": "nolabs-ai/claude",
   "groups": {
     "include": ["go_runtime", "go_runtime_linux", "go_runtime_macos"]
   },
   "network": {
     "network_profile": "claude-code",
-    "credentials": ["github"],
-    "allow_domain": ["proxy.golang.org", "sum.golang.org"]
+    "credentials": ["github", "github_git"],
+    "allow_domain": ["proxy.golang.org", "sum.golang.org"],
+    "custom_credentials": {
+      "github_git": {
+        "upstream": "https://github.com",
+        "credential_key": "env://GITHUB_GIT_AUTH",
+        "env_var": "GITHUB_GIT_AUTH",
+        "inject_mode": "basic_auth"
+      }
+    }
   },
   "filesystem": {
     "read": ["$HOME/.local/share/mise", "$HOME/.config/mise"],
