@@ -10,7 +10,8 @@ fnox exec -- nono run --profile .nono/profile.json --allow-cwd --no-diagnostics 
 nn
 ```
 
-nn reads `.nono/nn.yml`, builds that command line, and runs it.
+`nn` is a small CLI that drives [nono](https://nono.sh) from a config file: it
+reads your flags from `.nono/nn.yml`, assembles that command line, and runs it.
 
 ## Install
 
@@ -24,68 +25,74 @@ Requires [nono](https://nono.sh). From a clone: `mise run install`.
 
 ```sh
 cd myproject
-nn init          # writes .nono/nn.yml
+nn init            # writes .nono/nn.yml
 ```
 
-Edit it to say which profile to use and what to run:
+Say which profile to use and what to run:
 
 ```yaml
-profile: go-dev          # a profile name, or a file in .nono/
-command: [go, test, ./...]
+# .nono/nn.yml
+profile: profile.json      # a file in .nono/, or a profile name
+command: [claude]
 allow_cwd: true
 
 run:
   trust_proxy_ca: true
+  no_diagnostics: true
 ```
 
-Check what it will do, then do it:
+Then:
 
-```console
-$ nn print
-nono run --profile go-dev --allow-cwd --trust-proxy-ca -- go test ./...
-
-$ nn
+```sh
+nn
 ```
 
-`nn` works from any subdirectory — it searches upward for `.nono/nn.yml`.
-
-### Useful from here
+That runs `claude` in the sandbox your profile describes, from any subdirectory
+— nn searches upward for `.nono/nn.yml`.
 
 ```sh
 nn -- go build ./...     # run something else, this once
-nn --append -- -race     # add args to the configured command
+nn --append -- --resume  # add args to the configured command
 nn shell                 # interactive shell in the sandbox
 nn wrap -- go test       # direct mode, for scripts and CI
-nn doctor                # check the config and every binary it needs
+```
+
+### Example: sandboxed Go builds
+
+`.nono/profile.json` — the sandbox policy, extending a built-in:
+
+```json
+{
+  "meta": { "name": "go-build" },
+  "extends": "go-dev",
+  "workdir": { "access": "readwrite" },
+  "network": {
+    "allow_domain": ["proxy.golang.org", "sum.golang.org"]
+  }
+}
+```
+
+`.nono/nn.yml` — the flags that profile can't hold:
+
+```yaml
+profile: profile.json
+command: [go, build, ./...]
+allow_cwd: true
+
+run:
+  trust_proxy_ca: true     # Go tooling needs the proxy CA
+  skip_dir: [node_modules]
 ```
 
 ## Configuration
 
-### What goes here, and what doesn't
+Sandbox policy — filesystem, network, credentials, ports — belongs in
+`profile.json`. `nn.yml` carries only what a profile can't express: nono flags
+with no profile equivalent, and wrapper commands that run *above* nono. Put a
+profile key here and nn tells you where it belongs instead.
 
-**Sandbox policy goes in `profile.json`** — filesystem grants, network rules,
-credentials, ports. nn does not duplicate any of it.
-
-**`nn.yml` carries what a profile can't express**: nono flags with no profile
-equivalent, and the wrapper command that runs *above* nono. If you put a profile
-key here by mistake, nn tells you where it belongs:
-
-```console
-$ nn print
-nn: .nono/nn.yml:
-[3:1] unknown field "allow_domain"
->  3 | allow_domain: [proxy.golang.org]
-       ^
-
-`--allow-domain` is expressible in the nono profile — set network.allow_domain in your profile.json instead.
-```
-
-### Keys
-
-Key names are nono's flag names with `-` as `_`: `--no-diagnostics` is
-`no_diagnostics`. So `nono run --help` doubles as the key reference.
-
-The ones you'll actually reach for:
+Key names are nono's flag names with `-` as `_`, so `nono run --help` is the
+reference. The ones you'll reach for:
 
 | Key | Type | Does |
 |---|---|---|
@@ -107,14 +114,12 @@ Also supported: `extends`, `config`, `workdir`, `bypass_protection`,
 the `rollback*` and `audit*` families, `trust_override`, `diagnostics_json`,
 `dry_run`, `silent`, `verbose`, `theme`, `log_file`.
 
-One naming exception: `shell_bin` carries `--shell`, because `shell` names the
-shell-mode block.
+`shell_bin` carries `--shell`, because `shell` names the shell-mode block.
 
 ### Per-mode blocks
 
-`run`, `shell` and `wrap` accept different flags — `wrap` is direct mode, so it
-has no proxy, rollback or audit flags at all. Put mode-specific settings in a
-block:
+`run`, `shell` and `wrap` accept different flags. Put mode-specific settings in
+a block:
 
 ```yaml
 profile: profile.json
@@ -126,17 +131,15 @@ wrap:
   command: [go, test, ./...]
 ```
 
-A key in a block that the mode rejects is an **error** — naming the block says
-you meant it there. The same key at the **top level** is quietly skipped for
-modes that lack it, and nn says so:
+A key in a block the mode rejects is an error. The same key at the top level is
+skipped for modes that lack it, and nn says so — which is what lets one file
+serve both `nn` and `nn wrap`:
 
 ```console
 $ nn wrap --print
 nn: note: not supported by `nono wrap`, ignored: trust_proxy_ca
 nono wrap --profile go-dev -- go build
 ```
-
-That's what lets one file serve both `nn` and `nn wrap`.
 
 ### Wrappers
 
@@ -160,11 +163,10 @@ env_unset:
   - AWS_PROFILE
 ```
 
-These apply to the **outer** chain — your wrappers and nono itself. `NONO_*` and
-`PATH` stop there and never reach the sandboxed child, which is exactly why they
-belong here: profile `set_vars` refuses both.
-
-For variables meant for the child, use `environment.set_vars` in `profile.json`.
+These apply to the outer chain — your wrappers and nono itself. `NONO_*` and
+`PATH` stop there and never reach the sandboxed child, which is why they belong
+here: profile `set_vars` refuses both. For variables meant for the child, use
+`environment.set_vars` in `profile.json`.
 
 `${VAR}` expands against your shell environment only, so
 `PATH: "${HOME}/bin:${PATH}"` means the PATH you already had. An undefined
@@ -184,11 +186,8 @@ about to run. Opt out with `herdr: false`.
 | `nn doctor` | check config, binaries and profile |
 | `nn version` | version, commit and source date |
 
-Handy flags: `--profile`, `--append`, `--no-wrappers`, `-e KEY=VALUE`,
-`-u KEY`, `-c <path>`.
-
-Everything after `--` goes to the child untouched, so `nn -- go test -v` never
-lets nn see the `-v`.
+Flags: `--profile`, `--append`, `--no-wrappers`, `-e KEY=VALUE`, `-u KEY`,
+`-c <path>`. Everything after `--` goes to the child untouched.
 
 ## Troubleshooting
 
@@ -197,42 +196,42 @@ lets nn see the `-v`.
 | `no .nono/nn.yml found` | `nn init`, or `-c <path>` |
 | `found .nono but no nn.yml in it` | `nn init` |
 | `contains both nn.yml and nn.yaml` | delete one; nn won't guess |
-| `profile: … does not exist` | check the filename — nn suggests near-misses like `.jsonc` |
-| `unknown field "x"` | either a typo (nn suggests one) or a profile key |
+| `profile: … does not exist` | check the filename — nn suggests near-misses |
+| `unknown field "x"` | a typo, or a key that belongs in the profile |
 | `not found on PATH` | `nn doctor` names the missing binary |
 
-`nn print` shows the exact command, and `nn doctor` checks every piece of it.
-Between them, most problems are one command away.
+Two commands cover most of it. `nn print` shows the exact command line nn will
+run, without running it:
 
-Exit codes: **2** for config or usage errors, **127** for a missing binary,
-otherwise whatever the child returned.
+```console
+$ nn print
+nono run --profile /myproject/.nono/profile.json --allow-cwd --trust-proxy-ca --no-diagnostics -- claude
+```
 
-## How it works
+`nn doctor` checks every piece of that chain — the wrappers, nono, and the
+profile via `nono profile validate`:
 
-nn assembles the command line and `exec`s it, replacing itself. Nothing
-supervises, so signals, the terminal and the exit code all behave exactly as if
-you'd typed the long version — the same thing `fnox exec` and `nono wrap` do.
+```console
+$ nn doctor
+  ok    config      /myproject/.nono/nn.yml
+  ok    config parses and validates
+  ok    nn run    builds
+  ok    nono        /opt/homebrew/bin/nono (nono 0.76.0)
+  ok    command     claude
+  ok    profile     /myproject/.nono/profile.json
+  ok    nn shell  builds
+  ok    nn wrap   builds
 
-Paths in the config are made absolute before use, because nono runs from your
-working directory, which may be far below the project root. `profile` and
-`config` resolve against `.nono/`; everything else against the project root.
+all good
+```
 
 ## Development
 
 ```sh
 mise run build      # -> bin/nn
 mise run check      # vet, gofmt, cross-compile, test
-mise run repro      # verify the build is byte-for-byte reproducible
+mise run repro      # verify the build is reproducible
 mise run install    # PREFIX=~/.local
 ```
 
-Builds are reproducible: `-trimpath`, and a source date from
-`SOURCE_DATE_EPOCH` or the commit rather than the wall clock.
-
-The per-mode flag matrix is generated from `nono --help`, not transcribed, and a
-test re-derives it from the installed nono so an upgrade that moves a flag fails
-loudly. `syscall.Exec` can't be tested in-process, so the exec path is covered by
-subprocess tests against stand-in binaries.
-
-`mise.toml` pins Go and redirects `GOPATH` in-tree, because `~/go` isn't
-writable under the nono profile this repo develops against.
+See [CLAUDE.md](CLAUDE.md) for architecture and design decisions.
