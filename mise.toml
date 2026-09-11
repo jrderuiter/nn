@@ -35,17 +35,23 @@ outputs = ["bin/nn"]
 
 [tasks.repro]
 description = "Verify the build is byte-for-byte reproducible"
+# --force is required: the build task is cached on sources/outputs, so a
+# plain `mise run build` here would skip both builds and silently compare
+# two files that were never written.
 run = """
 set -e
 d=$(mktemp -d)
 trap 'rm -rf "$d"' EXIT
-OUT="$d/a" mise run build
-OUT="$d/b" mise run build
+OUT="$d/a" mise run --force build
+OUT="$d/b" mise run --force build
+for f in a b; do
+  [ -s "$d/$f" ] || { echo "build produced no output at $d/$f" >&2; exit 1; }
+done
 if cmp -s "$d/a" "$d/b"; then
-  echo "reproducible: $(shasum -a 256 "$d/a" | cut -d" " -f1)"
+  echo "reproducible: $(shasum -a 256 "$d/a" | cut -d' ' -f1)"
 else
-  echo "NOT reproducible:"
-  shasum -a 256 "$d/a" "$d/b"
+  echo "NOT reproducible:" >&2
+  shasum -a 256 "$d/a" "$d/b" >&2
   exit 1
 fi
 """
