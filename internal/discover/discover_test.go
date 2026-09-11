@@ -3,6 +3,7 @@ package discover
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -121,4 +122,82 @@ func TestResolvePathAnchors(t *testing.T) {
 	if got := ResolvePath("$HOME/x", "/proj"); got != "/proj/$HOME/x" {
 		t.Errorf("$VAR must not expand: got %s", got)
 	}
+}
+
+// Both spellings are accepted: guessing wrong would otherwise be
+// indistinguishable from having no config at all.
+func TestFindAcceptsBothSpellings(t *testing.T) {
+	for _, name := range ConfigNames {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			nono := filepath.Join(root, DirName)
+			if err := os.MkdirAll(nono, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(nono, name), []byte("command: [x]\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			dirs, err := Find(root)
+			if err != nil {
+				t.Fatalf("Find: %v", err)
+			}
+			if filepath.Base(dirs.ConfigPath) != name {
+				t.Errorf("ConfigPath = %s, want %s", dirs.ConfigPath, name)
+			}
+		})
+	}
+}
+
+// Silently preferring one would make edits to the other appear to do nothing.
+func TestFindRejectsBothSpellingsAtOnce(t *testing.T) {
+	root := t.TempDir()
+	nono := filepath.Join(root, DirName)
+	if err := os.MkdirAll(nono, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range ConfigNames {
+		if err := os.WriteFile(filepath.Join(nono, name), []byte("command: [x]\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err := Find(root)
+	var amb *AmbiguousError
+	if err == nil || !errorsAs(err, &amb) {
+		t.Fatalf("want *AmbiguousError, got %T: %v", err, err)
+	}
+}
+
+// Finding a .nono with no config in it calls for different advice than
+// finding no .nono at all.
+func TestNotFoundMentionsAnEmptyNonoDir(t *testing.T) {
+	root := t.TempDir()
+	nono := filepath.Join(root, DirName)
+	if err := os.MkdirAll(nono, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nono, "profile.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Find(root)
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	var nf *NotFoundError
+	if !asNotFound(err, &nf) {
+		t.Fatalf("want *NotFoundError, got %T", err)
+	}
+	if nf.NonoDir == "" {
+		t.Error("NonoDir should name the directory that was found")
+	}
+	if !strings.Contains(err.Error(), DirName) {
+		t.Errorf("message should name the directory:\n%v", err)
+	}
+}
+
+func errorsAs(err error, target **AmbiguousError) bool {
+	e, ok := err.(*AmbiguousError)
+	if ok {
+		*target = e
+	}
+	return ok
 }

@@ -10,6 +10,7 @@ import (
 )
 
 const template = `# nn configuration — see https://nono.sh for nono itself.
+# This file may be named nn.yml or nn.yaml, but not both.
 #
 # nn carries only the flags a nono profile CANNOT express. Everything else
 # (filesystem grants, network policy, credentials, ports) belongs in

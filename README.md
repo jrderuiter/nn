@@ -41,8 +41,9 @@ run:
   no_diagnostics: true
 ```
 
-`profile:` takes either a filename relative to `.nono/` (`profile.json`) or a
-profile name nono already knows. `nono profile list` shows what is available;
+The config may be named `nn.yml` or `nn.yaml`. `profile:` takes either a
+filename relative to `.nono/` (`profile.json`) or a profile name nono already
+knows — a filename is checked to exist, a name is left for nono to resolve. `nono profile list` shows what is available;
 `nono profile init <name>` creates your own.
 
 ### 3. See what it will run

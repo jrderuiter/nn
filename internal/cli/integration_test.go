@@ -49,22 +49,35 @@ type result struct {
 	code           int
 }
 
-// project writes a config and returns a deep subdirectory to run from, so
-// every test also exercises the walk-up search.
+// project writes a config plus the profile it references, and returns a deep
+// subdirectory to run from, so every test also exercises the walk-up search.
 func project(t *testing.T, cfg string) string {
 	t.Helper()
+	deep, _ := projectDirs(t, cfg)
+	return deep
+}
+
+// projectDirs also returns the .nono directory, for tests that need to add or
+// remove files in it.
+func projectDirs(t *testing.T, cfg string) (deep, nonoDir string) {
+	t.Helper()
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".nono"), 0o755); err != nil {
+	nonoDir = filepath.Join(root, ".nono")
+	if err := os.MkdirAll(nonoDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".nono", "nn.yml"), []byte(cfg), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(nonoDir, "nn.yml"), []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	deep := filepath.Join(root, "cmd", "server")
+	// nn checks that a path-valued profile exists, so the fixture needs one.
+	if err := os.WriteFile(filepath.Join(nonoDir, "profile.json"), []byte(`{"meta":{"name":"t"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	deep = filepath.Join(root, "cmd", "server")
 	if err := os.MkdirAll(deep, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	return deep
+	return deep, nonoDir
 }
 
 func runNN(t *testing.T, dir string, env []string, stdin string, args ...string) result {
@@ -246,5 +259,49 @@ func TestCommandOverrideFromCLI(t *testing.T) {
 	}
 	if strings.Contains(joined, "claude") {
 		t.Errorf("-- args should replace the command: %s", joined)
+	}
+}
+
+// A path-valued profile that does not exist would otherwise be handed to
+// nono, which reports it from two processes down with no idea which config
+// produced it.
+func TestMissingProfileIsCaughtByNN(t *testing.T) {
+	dir, nonoDir := projectDirs(t, "nono_bin: fakenono\nprofile: profile.json\ncommand: [x]\n")
+	if err := os.Remove(filepath.Join(nonoDir, "profile.json")); err != nil {
+		t.Fatal(err)
+	}
+	r := runNN(t, dir, nil, "", "print")
+	if r.code != 2 {
+		t.Errorf("exit = %d, want 2", r.code)
+	}
+	if !strings.Contains(r.stderr, "profile.json does not exist") {
+		t.Errorf("stderr = %q", r.stderr)
+	}
+}
+
+// The common near-miss: the profile is there, under another extension.
+func TestMissingProfileSuggestsNearbyFile(t *testing.T) {
+	dir, nonoDir := projectDirs(t, "nono_bin: fakenono\nprofile: profile.json\ncommand: [x]\n")
+	if err := os.Remove(filepath.Join(nonoDir, "profile.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nonoDir, "profile.jsonc"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := runNN(t, dir, nil, "", "print")
+	if !strings.Contains(r.stderr, `did you mean "profile.jsonc"`) {
+		t.Errorf("stderr should suggest the near-miss:\n%s", r.stderr)
+	}
+}
+
+// A bare profile name is nono's to resolve, so nn must not check the filesystem.
+func TestProfileNameIsNotFileChecked(t *testing.T) {
+	dir := project(t, "nono_bin: fakenono\nprofile: go-dev\ncommand: [x]\n")
+	r := runNN(t, dir, nil, "", "print")
+	if r.code != 0 {
+		t.Errorf("exit = %d, want 0 (stderr: %s)", r.code, r.stderr)
+	}
+	if !strings.Contains(r.stdout, "--profile go-dev") {
+		t.Errorf("stdout = %q", r.stdout)
 	}
 }

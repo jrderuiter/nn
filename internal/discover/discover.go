@@ -10,11 +10,16 @@ import (
 	"strings"
 )
 
-// ConfigName is the file nn looks for, inside a .nono directory.
-const (
-	DirName    = ".nono"
-	ConfigName = "nn.yml"
-)
+// DirName is the directory nn looks in.
+const DirName = ".nono"
+
+// ConfigNames are the accepted config filenames, in precedence order. Both
+// spellings are accepted because guessing wrong is otherwise indistinguishable
+// from having no config at all.
+var ConfigNames = []string{"nn.yml", "nn.yaml"}
+
+// ConfigName is the canonical name, used by `nn init` and in messages.
+const ConfigName = "nn.yml"
 
 // Dirs are the locations everything else is resolved against.
 type Dirs struct {
@@ -26,12 +31,32 @@ type Dirs struct {
 // NotFoundError reports that no config was found, and where nn looked.
 type NotFoundError struct {
 	From string
+	// NonoDir is a .nono directory that exists but holds no config. Finding
+	// one changes the advice completely, so it is worth saying.
+	NonoDir string
 }
 
 func (e *NotFoundError) Error() string {
+	if e.NonoDir != "" {
+		return fmt.Sprintf("found %s but no %s in it\n"+
+			"    create one with `nn init`, or point at an existing file with --config",
+			e.NonoDir, strings.Join(ConfigNames, " or "))
+	}
 	return fmt.Sprintf("no %s/%s found\n    searched from %s up to %s\n"+
 		"    create one with `nn init`, or point at an existing file with --config",
 		DirName, ConfigName, e.From, string(filepath.Separator))
+}
+
+// AmbiguousError reports two config files where only one may win. Picking
+// silently would mean edits to the other file appear to do nothing.
+type AmbiguousError struct {
+	Dir   string
+	Names []string
+}
+
+func (e *AmbiguousError) Error() string {
+	return fmt.Sprintf("%s contains both %s\n    remove one; nn will not guess",
+		e.Dir, strings.Join(e.Names, " and "))
 }
 
 // Find walks up from startDir looking for .nono/nn.yml. It walks to the
@@ -43,16 +68,50 @@ func Find(startDir string) (Dirs, error) {
 		return Dirs{}, err
 	}
 	from := dir
+	var sawNonoDir string
 	for {
-		candidate := filepath.Join(dir, DirName, ConfigName)
-		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
-			return dirsFor(candidate), nil
+		nonoDir := filepath.Join(dir, DirName)
+		found, err := configIn(nonoDir)
+		if err != nil {
+			return Dirs{}, err
+		}
+		if found != "" {
+			return dirsFor(found), nil
+		}
+		if sawNonoDir == "" {
+			if st, err := os.Stat(nonoDir); err == nil && st.IsDir() {
+				sawNonoDir = nonoDir
+			}
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return Dirs{}, &NotFoundError{From: from}
+			return Dirs{}, &NotFoundError{From: from, NonoDir: sawNonoDir}
 		}
 		dir = parent
+	}
+}
+
+// configIn returns the config file in dir, or "" if there is none. Two
+// spellings present at once is an error rather than a precedence rule.
+func configIn(dir string) (string, error) {
+	var found []string
+	for _, name := range ConfigNames {
+		p := filepath.Join(dir, name)
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			found = append(found, p)
+		}
+	}
+	switch len(found) {
+	case 0:
+		return "", nil
+	case 1:
+		return found[0], nil
+	default:
+		names := make([]string, len(found))
+		for i, p := range found {
+			names[i] = filepath.Base(p)
+		}
+		return "", &AmbiguousError{Dir: dir, Names: names}
 	}
 }
 
