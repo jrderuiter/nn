@@ -36,12 +36,12 @@ jobs:
       # Full history: mise.toml stamps the version from `git describe --tags`
       # and the build date from the commit time. A shallow clone has neither,
       # and the build would silently label itself "dev".
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       # Installs the Go version pinned in mise.toml.
-      - uses: jdx/mise-action@v2
+      - uses: jdx/mise-action@v4
 
       - name: Build
         env:
@@ -65,7 +65,7 @@ jobs:
         if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
         run: ./dist/nn-linux-amd64 version
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: nn-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/nn-${{ matrix.goos }}-${{ matrix.goarch }}*
