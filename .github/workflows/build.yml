@@ -1,0 +1,72 @@
+# Cross-compiles nn for every supported platform and uploads each binary as a
+# workflow artifact.
+#
+# The build itself is `mise run build`, not an inline `go build`: the ldflags,
+# -trimpath and the SOURCE_DATE_EPOCH date stamping live in mise.toml, and a
+# second copy here would drift from it. CI only supplies GOOS/GOARCH/OUT.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+    steps:
+      # Full history: mise.toml stamps the version from `git describe --tags`
+      # and the build date from the commit time. A shallow clone has neither,
+      # and the build would silently label itself "dev".
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Installs the Go version pinned in mise.toml.
+      - uses: jdx/mise-action@v2
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          # nn has no cgo dependencies. Off explicitly so the native
+          # linux/amd64 binary is built the same way as the cross-compiled
+          # ones, and needs no particular glibc at runtime.
+          CGO_ENABLED: "0"
+          OUT: dist/nn-${{ matrix.goos }}-${{ matrix.goarch }}
+        # -f because the build task is cached on sources/outputs, and OUT
+        # points somewhere other than the declared output.
+        run: |
+          mkdir -p dist
+          mise run -f build
+          (cd dist && sha256sum "nn-$GOOS-$GOARCH" > "nn-$GOOS-$GOARCH.sha256")
+
+      # Only meaningful where the runner can execute what we just built, but
+      # that is enough to catch a broken ldflags stamp before it ships.
+      - name: Smoke test
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        run: ./dist/nn-linux-amd64 version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nn-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/nn-${{ matrix.goos }}-${{ matrix.goarch }}*
+          if-no-files-found: error
