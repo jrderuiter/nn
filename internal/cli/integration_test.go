@@ -50,7 +50,8 @@ type result struct {
 }
 
 // project writes a config plus the profile it references, and returns a deep
-// subdirectory to run from, so every test also exercises the walk-up search.
+// subdirectory to run from, so every test also exercises discovery via the git
+// root.
 func project(t *testing.T, cfg string) string {
 	t.Helper()
 	deep, _ := projectDirs(t, cfg)
@@ -61,8 +62,20 @@ func project(t *testing.T, cfg string) string {
 // remove files in it.
 func projectDirs(t *testing.T, cfg string) (deep, nonoDir string) {
 	t.Helper()
+	root := projectRoot(t, cfg)
+	return filepath.Join(root, "cmd", "server"), filepath.Join(root, ".nono")
+}
+
+// projectRoot builds the tree and returns its top. The .git marker is what
+// makes the config reachable from the deep subdirectory: discovery looks in the
+// current directory and the git root, and nowhere else.
+func projectRoot(t *testing.T, cfg string) string {
+	t.Helper()
 	root := t.TempDir()
-	nonoDir = filepath.Join(root, ".nono")
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	nonoDir := filepath.Join(root, ".nono")
 	if err := os.MkdirAll(nonoDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -73,11 +86,10 @@ func projectDirs(t *testing.T, cfg string) (deep, nonoDir string) {
 	if err := os.WriteFile(filepath.Join(nonoDir, "profile.json"), []byte(`{"meta":{"name":"t"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	deep = filepath.Join(root, "cmd", "server")
-	if err := os.MkdirAll(deep, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "server"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	return deep, nonoDir
+	return root
 }
 
 func runNN(t *testing.T, dir string, env []string, stdin string, args ...string) result {
@@ -295,6 +307,57 @@ func TestMissingProfileSuggestsNearbyFile(t *testing.T) {
 }
 
 // A bare profile name is nono's to resolve, so nn must not check the filesystem.
+// A bare nn.yml at the top of the project is the second supported layout. Its
+// own directory anchors the profile, and is the project root for workdir.
+func TestBareConfigAtProjectRoot(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := "nono_bin: fakenono\ncommand: [claude]\nprofile: profile.json\nworkdir: .\n"
+	if err := os.WriteFile(filepath.Join(root, "nn.yml"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "profile.json"), []byte(`{"meta":{"name":"t"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	deep := filepath.Join(root, "cmd", "server")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	r := runNN(t, deep, nil, "", "print")
+	if r.code != 0 {
+		t.Fatalf("exit = %d, want 0 (stderr: %s)", r.code, r.stderr)
+	}
+	// Resolved for the symlinked temp dir, as everywhere else.
+	real, _ := filepath.EvalSymlinks(root)
+	for _, want := range []string{
+		"--profile " + filepath.Join(real, "profile.json"),
+		"--workdir " + real,
+	} {
+		if !strings.Contains(r.stdout, want) {
+			t.Errorf("stdout should contain %q:\n%s", want, r.stdout)
+		}
+	}
+}
+
+// A bare nn.yml in the current directory wins over the project's .nono one.
+func TestBareConfigBeatsNonoDirEndToEnd(t *testing.T) {
+	root := projectRoot(t, baseCfg)
+	if err := os.WriteFile(filepath.Join(root, "nn.yml"),
+		[]byte("nono_bin: fakenono\ncommand: [bare]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := runNN(t, filepath.Join(root, "cmd", "server"), nil, "", "print")
+	if r.code != 0 {
+		t.Fatalf("exit = %d, want 0 (stderr: %s)", r.code, r.stderr)
+	}
+	if !strings.Contains(r.stdout, "-- bare") {
+		t.Errorf("bare nn.yml should win:\n%s", r.stdout)
+	}
+}
+
 func TestProfileNameIsNotFileChecked(t *testing.T) {
 	dir := project(t, "nono_bin: fakenono\nprofile: go-dev\ncommand: [x]\n")
 	r := runNN(t, dir, nil, "", "print")

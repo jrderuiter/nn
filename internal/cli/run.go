@@ -74,10 +74,10 @@ func checkFiles(sec *config.Section, dirs discover.Dirs) error {
 			continue
 		}
 		// A bare name is nono's to resolve — only a path is ours to check.
-		if f.key == "profile" && !discover.IsPathLike(f.val.Value, dirs.NonoDir) {
+		if f.key == "profile" && !discover.IsPathLike(f.val.Value, dirs.ConfigDir) {
 			continue
 		}
-		resolved := discover.ResolvePath(f.val.Value, dirs.NonoDir)
+		resolved := discover.ResolvePath(f.val.Value, dirs.ConfigDir)
 		if _, err := os.Stat(resolved); err != nil {
 			return fmt.Errorf("%s: %s does not exist%s", f.key, resolved, nearbyHint(f.key, resolved, dirs))
 		}

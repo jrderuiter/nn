@@ -7,36 +7,203 @@ import (
 	"testing"
 )
 
-func TestFindWalksUp(t *testing.T) {
-	root := t.TempDir()
-	deep := filepath.Join(root, "cmd", "server", "internal")
+// resolved compares through EvalSymlinks: t.TempDir can hand back a symlinked
+// path (/var -> /private/var on macOS).
+func resolved(t *testing.T, got, want, what string) {
+	t.Helper()
+	g, _ := filepath.EvalSymlinks(got)
+	w, _ := filepath.EvalSymlinks(want)
+	if g != w {
+		t.Errorf("%s = %s, want %s", what, g, w)
+	}
+}
+
+// gitProject builds a project with a .git marker at its top and returns the
+// top and a deep subdirectory to search from.
+func gitProject(t *testing.T) (root, deep string) {
+	t.Helper()
+	root = t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	deep = filepath.Join(root, "cmd", "server", "internal")
 	if err := os.MkdirAll(deep, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	nono := filepath.Join(root, DirName)
-	if err := os.MkdirAll(nono, 0o755); err != nil {
+	return root, deep
+}
+
+func writeConfig(t *testing.T, dir, name string) string {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cfg := filepath.Join(nono, ConfigName)
-	if err := os.WriteFile(cfg, []byte("command: [echo]\n"), 0o644); err != nil {
+	p := filepath.Join(dir, name)
+	if err := os.WriteFile(p, []byte("command: [echo]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	return p
+}
+
+// A bare nn.yml beside the config is the new second supported layout. Its own
+// directory is both the config anchor and the project root.
+func TestFindsBareConfigInCwd(t *testing.T) {
+	root := t.TempDir()
+	cfg := writeConfig(t, root, ConfigName)
+
+	dirs, err := Find(root)
+	if err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	resolved(t, dirs.ConfigPath, cfg, "ConfigPath")
+	resolved(t, dirs.ConfigDir, root, "ConfigDir")
+	resolved(t, dirs.Root, root, "Root")
+}
+
+// With a bare config the project root must be the config's own directory. The
+// old rule, the grandparent, would put the workdir anchor outside the project.
+func TestRootAnchorForBareConfig(t *testing.T) {
+	root := t.TempDir()
+	writeConfig(t, root, ConfigName)
+
+	dirs, err := Find(root)
+	if err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	if dirs.Root == filepath.Dir(dirs.ConfigDir) {
+		t.Errorf("Root = %s, must not be the config dir's parent", dirs.Root)
+	}
+	resolved(t, dirs.Root, root, "Root")
+}
+
+// Under .nono/ the root is still the parent, so `workdir: .` means the project
+// rather than the .nono dir.
+func TestRootAnchorUnderNonoDir(t *testing.T) {
+	root := t.TempDir()
+	writeConfig(t, filepath.Join(root, DirName), ConfigName)
+
+	dirs, err := Find(root)
+	if err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	resolved(t, dirs.ConfigDir, filepath.Join(root, DirName), "ConfigDir")
+	resolved(t, dirs.Root, root, "Root")
+}
+
+// A bare config wins over one under .nono/ in the same directory.
+func TestBareConfigBeatsNonoDir(t *testing.T) {
+	root := t.TempDir()
+	bare := writeConfig(t, root, ConfigName)
+	writeConfig(t, filepath.Join(root, DirName), ConfigName)
+
+	dirs, err := Find(root)
+	if err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	resolved(t, dirs.ConfigPath, bare, "ConfigPath")
+}
+
+// Across directories .yml wins, and that is a precedence rule rather than the
+// conflict two spellings in one directory would be.
+func TestYmlBeatsYamlAcrossDirs(t *testing.T) {
+	root := t.TempDir()
+	bare := writeConfig(t, root, "nn.yml")
+	writeConfig(t, filepath.Join(root, DirName), "nn.yaml")
+
+	dirs, err := Find(root)
+	if err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	resolved(t, dirs.ConfigPath, bare, "ConfigPath")
+}
+
+// The git root is what makes a config reachable from a subdirectory now that
+// there is no unbounded walk. All four layouts must be found there.
+func TestFindsConfigAtGitRoot(t *testing.T) {
+	for _, layout := range []struct{ dir, name string }{
+		{"", "nn.yml"},
+		{"", "nn.yaml"},
+		{DirName, "nn.yml"},
+		{DirName, "nn.yaml"},
+	} {
+		t.Run(filepath.Join(layout.dir, layout.name), func(t *testing.T) {
+			root, deep := gitProject(t)
+			cfg := writeConfig(t, filepath.Join(root, layout.dir), layout.name)
+
+			dirs, err := Find(deep)
+			if err != nil {
+				t.Fatalf("Find: %v", err)
+			}
+			resolved(t, dirs.ConfigPath, cfg, "ConfigPath")
+			resolved(t, dirs.Root, root, "Root")
+		})
+	}
+}
+
+// A worktree or submodule checkout has .git as a file holding a gitdir:
+// pointer. It is equally the top of a working tree.
+func TestGitRootFromAGitFile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".git"), []byte("gitdir: /elsewhere/worktrees/x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	deep := filepath.Join(root, "cmd", "server")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := writeConfig(t, root, ConfigName)
 
 	dirs, err := Find(deep)
 	if err != nil {
 		t.Fatalf("Find: %v", err)
 	}
-	// t.TempDir can hand back a symlinked path (/var -> /private/var on
-	// macOS), so compare resolved forms.
-	wantCfg, _ := filepath.EvalSymlinks(cfg)
-	gotCfg, _ := filepath.EvalSymlinks(dirs.ConfigPath)
-	if gotCfg != wantCfg {
-		t.Errorf("ConfigPath = %s, want %s", gotCfg, wantCfg)
+	resolved(t, dirs.ConfigPath, cfg, "ConfigPath")
+}
+
+// The nearer config wins: a per-directory config overrides the project's.
+func TestCwdBeatsGitRoot(t *testing.T) {
+	root, deep := gitProject(t)
+	writeConfig(t, root, ConfigName)
+	near := writeConfig(t, filepath.Join(deep, DirName), ConfigName)
+
+	dirs, err := Find(deep)
+	if err != nil {
+		t.Fatalf("Find: %v", err)
 	}
-	wantRoot, _ := filepath.EvalSymlinks(root)
-	gotRoot, _ := filepath.EvalSymlinks(dirs.Root)
-	if gotRoot != wantRoot {
-		t.Errorf("Root = %s, want %s", gotRoot, wantRoot)
+	resolved(t, dirs.ConfigPath, near, "ConfigPath")
+}
+
+// The unbounded walk is gone. Without a git root there is nothing above the
+// cwd to search, so an ancestor's config is deliberately not found.
+func TestNoWalkUpWithoutGit(t *testing.T) {
+	root := t.TempDir()
+	writeConfig(t, filepath.Join(root, DirName), ConfigName)
+	deep := filepath.Join(root, "cmd", "server")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Find(deep)
+	var nf *NotFoundError
+	if err == nil || !asNotFound(err, &nf) {
+		t.Fatalf("want *NotFoundError, got %T: %v", err, err)
+	}
+}
+
+// The search also stops going up at the git root: a config above it belongs to
+// an outer project.
+func TestDoesNotSearchAboveGitRoot(t *testing.T) {
+	outer := t.TempDir()
+	writeConfig(t, filepath.Join(outer, DirName), ConfigName)
+	inner := filepath.Join(outer, "vendor", "dep")
+	if err := os.MkdirAll(filepath.Join(inner, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Find(inner)
+	var nf *NotFoundError
+	if err == nil || !asNotFound(err, &nf) {
+		t.Fatalf("want *NotFoundError, got %T: %v", err, err)
 	}
 }
 
@@ -191,6 +358,49 @@ func TestNotFoundMentionsAnEmptyNonoDir(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), DirName) {
 		t.Errorf("message should name the directory:\n%v", err)
+	}
+}
+
+// The message has to list where nn actually looked; there is no walk to "/"
+// to describe any more.
+func TestNotFoundListsWhereItLooked(t *testing.T) {
+	root, deep := gitProject(t)
+
+	_, err := Find(deep)
+	var nf *NotFoundError
+	if err == nil || !asNotFound(err, &nf) {
+		t.Fatalf("want *NotFoundError, got %T: %v", err, err)
+	}
+	for _, want := range []string{deep, filepath.Join(deep, DirName), root, filepath.Join(root, DirName)} {
+		if !containsPath(nf.Searched, want) {
+			t.Errorf("Searched %v should include %s", nf.Searched, want)
+		}
+	}
+	if !strings.Contains(err.Error(), deep) {
+		t.Errorf("message should name the directories searched:\n%v", err)
+	}
+}
+
+func containsPath(haystack []string, want string) bool {
+	for _, h := range haystack {
+		if h == want {
+			return true
+		}
+	}
+	return false
+}
+
+// The same conflict applies to a bare config, where there is no .nono dir to
+// blame it on.
+func TestFindRejectsBothSpellingsBare(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range ConfigNames {
+		writeConfig(t, root, name)
+	}
+	_, err := Find(root)
+	var amb *AmbiguousError
+	if err == nil || !errorsAs(err, &amb) {
+		t.Fatalf("want *AmbiguousError, got %T: %v", err, err)
 	}
 }
 

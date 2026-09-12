@@ -49,7 +49,7 @@ func Build(sec *config.Section, mode config.Mode, dirs discover.Dirs, dropped []
 	// the herdr hint rather than losing it.
 	agentHint := command
 	if len(agentHint) == 0 && sec.Profile.Present {
-		p := discover.ResolveProfile(sec.Profile.Value, dirs.NonoDir)
+		p := discover.ResolveProfile(sec.Profile.Value, dirs.ConfigDir)
 		if bin, ok := discover.ProfileBinary(p); ok {
 			agentHint = []string{bin}
 		}
@@ -210,12 +210,12 @@ func emit(spec *config.FlagSpec, sec *config.Section, dirs discover.Dirs) []stri
 // config would otherwise resolve against the wrong directory.
 func anchorValue(spec *config.FlagSpec, v string, dirs discover.Dirs) string {
 	switch spec.Anchor {
-	case config.AnchorNono:
+	case config.AnchorConfig:
 		// profile: may name a built-in or registry profile rather than a file.
 		if spec.Key == "profile" {
-			return discover.ResolveProfile(v, dirs.NonoDir)
+			return discover.ResolveProfile(v, dirs.ConfigDir)
 		}
-		return discover.ResolvePath(v, dirs.NonoDir)
+		return discover.ResolvePath(v, dirs.ConfigDir)
 	case config.AnchorRoot:
 		return discover.ResolvePath(v, dirs.Root)
 	}

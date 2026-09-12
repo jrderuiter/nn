@@ -140,11 +140,11 @@ func checkProfile(r *report, sec *config.Section, dirs discover.Dirs) {
 		return
 	}
 	raw := sec.Profile.Value
-	if !discover.IsPathLike(raw, dirs.NonoDir) {
+	if !discover.IsPathLike(raw, dirs.ConfigDir) {
 		r.ok("profile     %s (name, resolved by nono)", raw)
 		return
 	}
-	resolved := discover.ResolveProfile(raw, dirs.NonoDir)
+	resolved := discover.ResolveProfile(raw, dirs.ConfigDir)
 	if _, err := os.Stat(resolved); err != nil {
 		r.fail("profile     %s does not exist", resolved)
 		return

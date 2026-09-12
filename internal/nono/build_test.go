@@ -13,7 +13,7 @@ import (
 
 var testDirs = discover.Dirs{
 	ConfigPath: "/proj/.nono/nn.yml",
-	NonoDir:    "/proj/.nono",
+	ConfigDir:  "/proj/.nono",
 	Root:       "/proj",
 }
 
@@ -354,7 +354,7 @@ func TestHerdrAgentFromProfileBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 	sec, dropped := config.Resolve(&f, config.ModeRun)
-	dirs := discover.Dirs{NonoDir: nonoDir, Root: root}
+	dirs := discover.Dirs{ConfigDir: nonoDir, Root: root}
 
 	p, err := Build(sec, config.ModeRun, dirs, dropped, Options{
 		Environ: []string{"PATH=/usr/bin", "HERDR_ENV=1", "HERDR_AGENT=nn"},

@@ -5,7 +5,7 @@ Architecture and design decisions for `nn`. User-facing docs are in
 
 ## What this is
 
-A thin arg-builder. nn reads `.nono/nn.yml`, assembles a command line for
+A thin arg-builder. nn reads `nn.yml`, assembles a command line for
 [nono](https://nono.sh), and `exec`s it. The core is ~200 lines of slice
 concatenation; almost everything else is validation and error messages.
 
@@ -97,14 +97,51 @@ Each implements both `yaml.BytesUnmarshaler` and `flag.Value`, which makes a CLI
 override one line. Preferred over `*bool`/`*int`: pointers aren't comparable in
 table-test literals and invite nil derefs in the emit loop.
 
+### Discovery is two directories, not a walk
+
+`discover.Find` checks the cwd and, when inside a git repository, the repo root.
+In each it accepts a bare `nn.yml` or one under `.nono/`, either spelling. Eight
+candidates, first match wins, ordered location-major: `./nn.yaml` outranks
+`./.nono/nn.yml`, because the question "which directory owns this project" is
+the one the user is actually answering.
+
+It used to walk from the cwd to `/`. That is an unbounded search over paths the
+user never named: a `.nono/nn.yml` in `$HOME`, or in a parent checkout that
+happens to contain this one, silently claims an unrelated project, and the
+symptom is a sandbox policy that came from nowhere visible. The git root is the
+one boundary above the cwd that reliably means *this project*, and it is also a
+ceiling — a config above an inner repo belongs to the outer one.
+
+The cost is that `$HOME/.nono/nn.yml` stops working as a personal default.
+That is the intended trade: `--config`/`$NN_CONFIG` covers it explicitly.
+
+`gitRoot` probes for a `.git` entry rather than running
+`git rev-parse --show-toplevel`. nn runs inside the sandboxes it builds, where
+git is not guaranteed to be on PATH or permitted to execute, and a failure there
+would surface as "no nn.yml found". Existence is the test, not `IsDir` — a
+worktree or submodule has `.git` as a file holding a `gitdir:` pointer.
+
+Two spellings in the *same* directory stays a hard error while ordering across
+directories is a precedence rule. The asymmetry is deliberate: a search order is
+something the user can reason about and exploit, whereas a winner inside one
+directory would just make edits to the loser do nothing.
+
 ### Paths are absolutised, with two anchors
 
 nono runs from the user's working directory, which may be far below the project
 root, so every path nn emits is made absolute first.
 
-- `profile` and `config` anchor to the `.nono` dir.
+- `profile` and `config` anchor to the config's own directory, so
+  `profile: profile.json` names the file sitting next to `nn.yml` in either
+  layout. This is also what `--config` has always done, so there is one rule
+  rather than a special case.
 - Everything else path-shaped anchors to the project root — `workdir: .` meaning
   the root is the intuitive reading.
+
+The root is the config's directory, except under `.nono/`, where it is the
+parent. It cannot be the grandparent as it once was: for a bare `nn.yml` that
+puts the `workdir`, `log_file` and socket anchors *outside* the project, and for
+`--config /tmp/x.yml` it made the root `/`.
 
 `$VAR` is deliberately **not** expanded in paths. nono profiles expand
 `$HOME`/`$WORKDIR` with their own semantics; a second layer would mean the same
@@ -178,9 +215,9 @@ iterating the spec table.
 
 `syscall.Exec` replaces the process, so the exec path is structurally
 untestable in-process. `internal/cli/integration_test.go` builds `nn` plus
-stand-in binaries and runs them as subprocesses, from a *subdirectory* so the
-upward search is exercised too. That is the only proof that exec's third
-argument is wired correctly.
+stand-in binaries and runs them as subprocesses, from a *subdirectory* of a
+fixture carrying a `.git` marker, so git-root discovery is exercised too. That
+is the only proof that exec's third argument is wired correctly.
 
 When adding a verification task or check, confirm it fails when it should.
 Two bugs of exactly that shape have already appeared here: `gofmt -l` exits 0

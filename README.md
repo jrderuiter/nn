@@ -28,11 +28,14 @@ cd myproject
 nn init            # writes .nono/nn.yml
 ```
 
+A plain `nn.yml` at the top of the project works just as well — see
+[Where the config lives](#where-the-config-lives).
+
 Say which profile to use and what to run:
 
 ```yaml
 # .nono/nn.yml
-profile: profile.json      # a file in .nono/, or a profile name
+profile: profile.json      # a file next to this one, or a profile name
 command: [claude]
 allow_cwd: true
 
@@ -48,7 +51,7 @@ nn
 ```
 
 That runs `claude` in the sandbox your profile describes, from any subdirectory
-— nn searches upward for `.nono/nn.yml`.
+of the repository — see [Where the config lives](#where-the-config-lives).
 
 ```sh
 nn -- go build ./...     # run something else, this once
@@ -96,7 +99,7 @@ reference. The ones you'll reach for:
 
 | Key | Type | Does |
 |---|---|---|
-| `profile` | string | profile name, or a file in `.nono/` |
+| `profile` | string | profile name, or a file next to the config |
 | `command` | list | what to run; `[]` defers to the profile's `binary` |
 | `allow_cwd` | bool | grant the working directory without prompting |
 | `wrappers` | list of lists | command prefixes to run before nono |
@@ -115,6 +118,33 @@ the `rollback*` and `audit*` families, `trust_override`, `diagnostics_json`,
 `dry_run`, `silent`, `verbose`, `theme`, `log_file`.
 
 `shell_bin` carries `--shell`, because `shell` names the shell-mode block.
+
+### Where the config lives
+
+The config can sit at the top of your project or inside `.nono/`, and nn looks
+in two places for it: the directory you are in, and — when you are inside a git
+repository — the repository root. `.yaml` works everywhere `.yml` does. First
+match wins:
+
+```
+1. ./nn.yml                 5. <repo root>/nn.yml
+2. ./nn.yaml                6. <repo root>/nn.yaml
+3. ./.nono/nn.yml           7. <repo root>/.nono/nn.yml
+4. ./.nono/nn.yaml          8. <repo root>/.nono/nn.yaml
+```
+
+So one config at the repository root serves every subdirectory, and a config in
+a subdirectory overrides it for that directory. Outside a git repository only
+the first four apply. nn does not search any further up: a `.nono/nn.yml` in
+your home directory or in a parent project is never picked up by accident.
+
+Both spellings in the *same* directory is an error — nn won't guess which you
+meant, because edits to the loser would appear to do nothing.
+
+Relative paths resolve against the config's own directory: `profile:
+profile.json` names the file next to `nn.yml` in either layout. `--config
+<path>` (or `$NN_CONFIG`) skips the search entirely and uses that file's
+directory the same way.
 
 ### Per-mode blocks
 
@@ -193,9 +223,10 @@ Flags: `--profile`, `--append`, `--no-wrappers`, `-e KEY=VALUE`, `-u KEY`,
 
 | Message | Fix |
 |---|---|
-| `no .nono/nn.yml found` | `nn init`, or `-c <path>` |
+| `no nn.yml found` | `nn init`, or `-c <path>`; the message lists where nn looked |
 | `found .nono but no nn.yml in it` | `nn init` |
 | `contains both nn.yml and nn.yaml` | delete one; nn won't guess |
+| config not picked up from a parent | it must be the repo root, or the current dir |
 | `profile: … does not exist` | check the filename — nn suggests near-misses |
 | `unknown field "x"` | a typo, or a key that belongs in the profile |
 | `not found on PATH` | `nn doctor` names the missing binary |

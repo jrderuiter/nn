@@ -17,9 +17,9 @@ const (
 type Anchor uint8
 
 const (
-	AnchorNone Anchor = iota // not a path; pass through untouched
-	AnchorNono               // relative to the .nono dir (profile, manifest)
-	AnchorRoot               // relative to the project root (.nono's parent)
+	AnchorNone   Anchor = iota // not a path; pass through untouched
+	AnchorConfig               // relative to the config's own dir (profile, manifest)
+	AnchorRoot                 // relative to the project root
 )
 
 // FlagSpec describes one nono flag nn can emit. This table is the only place
@@ -43,11 +43,11 @@ type FlagSpec struct {
 // than transcribed by hand.
 var Specs = []FlagSpec{
 	// profile selection
-	{Key: "profile", Flag: "--profile", Kind: KindString, Modes: ModeAll, Anchor: AnchorNono, Sandbox: true,
+	{Key: "profile", Flag: "--profile", Kind: KindString, Modes: ModeAll, Anchor: AnchorConfig, Sandbox: true,
 		Get: func(s *Section) any { return s.Profile }},
 	{Key: "extends", Flag: "--extends", Kind: KindStringSlice, Modes: ModeAll, Sandbox: true,
 		Get: func(s *Section) any { return s.Extends }},
-	{Key: "config", Flag: "--config", Kind: KindString, Modes: ModeAll, Anchor: AnchorNono,
+	{Key: "config", Flag: "--config", Kind: KindString, Modes: ModeAll, Anchor: AnchorConfig,
 		Get: func(s *Section) any { return s.Config }},
 
 	// filesystem / workdir
