@@ -7,4 +7,5 @@ wrappers:
 
 run:
   trust_proxy_ca: true
+  proxy_ca_validity: 7
   no_diagnostics: true

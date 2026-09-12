@@ -60,31 +60,75 @@ nn shell                 # interactive shell in the sandbox
 nn wrap -- go test       # direct mode, for scripts and CI
 ```
 
-### Example: sandboxed Go builds
+### Example: Claude Code in a sandbox
 
-`.nono/profile.json` — the sandbox policy, extending a built-in:
+`.nono/profile.json` — the sandbox policy, extending the Claude Code pack:
 
 ```json
 {
-  "meta": { "name": "go-build" },
-  "extends": "go-dev",
-  "workdir": { "access": "readwrite" },
+  "extends": "nolabs-ai/claude",
   "network": {
-    "allow_domain": ["proxy.golang.org", "sum.golang.org"]
+    "network_profile": "claude-code",
+    "credentials": ["github"]
   }
 }
 ```
+
+The pack grants Claude its own config and state paths. `credentials` injects
+GitHub auth at nono's proxy, so `gh` works inside the sandbox without a token
+ever being readable there.
 
 `.nono/nn.yml` — the flags that profile can't hold:
 
 ```yaml
 profile: profile.json
-command: [go, build, ./...]
+command: [claude]
 allow_cwd: true
 
 run:
-  trust_proxy_ca: true     # Go tooling needs the proxy CA
-  skip_dir: [node_modules]
+  trust_proxy_ca: true     # so tooling accepts the proxy's certificate
+  no_diagnostics: true
+```
+
+### Example: letting it build
+
+Claude in that sandbox can edit Go files but not build them. The toolchain and
+the build cache sit outside the working directory, and `proxy.golang.org` is
+not in the network profile. mise hits the same wall: it cannot write its own
+state and cache dirs, so `mise run check` fails before it starts.
+
+Both are grants on the profile, not flags on nn:
+
+```json
+{
+  "extends": "nolabs-ai/claude",
+  "groups": {
+    "include": ["go_runtime", "go_runtime_macos", "mise_manager"]
+  },
+  "network": {
+    "network_profile": "claude-code",
+    "credentials": ["github"],
+    "allow_domain": ["proxy.golang.org", "sum.golang.org"]
+  },
+  "filesystem": {
+    "allow": ["$HOME/.local/state/mise", "$HOME/.cache/mise"]
+  }
+}
+```
+
+`nono profile groups <name>` prints the paths a group grants, and whether it
+grants them read-only. `go_runtime` and `mise_manager` are read-only, which
+covers the Go toolchain and the mise binary; `go_runtime_macos` adds write
+access to `~/Library/Caches/go-build`. Nothing covers the dirs mise writes to,
+hence the two `filesystem.allow` entries. On Linux, swap `go_runtime_macos` for
+`go_runtime_linux`, or list both to keep one profile portable.
+
+`nn.yml` doesn't change. `trust_proxy_ca` was already there, and it is what lets
+`go mod download` accept the proxy's certificate. Check the result with a real
+build:
+
+```sh
+nn -- go build ./...
 ```
 
 ## Configuration
@@ -163,12 +207,13 @@ wrap:
 
 A key in a block the mode rejects is an error. The same key at the top level is
 skipped for modes that lack it, and nn says so — which is what lets one file
-serve both `nn` and `nn wrap`:
+serve both `nn` and `nn wrap`. Move `trust_proxy_ca` up out of the `run:` block
+and `nn wrap` drops it with a note instead of failing:
 
 ```console
 $ nn wrap --print
 nn: note: not supported by `nono wrap`, ignored: trust_proxy_ca
-nono wrap --profile go-dev -- go build
+nono wrap --profile /myproject/.nono/profile.json -- go test ./...
 ```
 
 ### Wrappers
