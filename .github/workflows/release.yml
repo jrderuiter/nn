@@ -1,0 +1,116 @@
+# Builds nn for every supported platform on a v* tag and attaches the
+# binaries to a draft GitHub release.
+#
+# Tags only. There is no push or pull_request trigger: these are release
+# artifacts, and building them on every commit produced four binaries per
+# push that nothing consumed. workflow_dispatch is kept so the workflow can
+# be exercised without inventing a tag -- it builds and uploads artifacts,
+# but publishes no release.
+#
+# The build itself is `mise run build`, not an inline `go build`: the
+# ldflags, -trimpath and the SOURCE_DATE_EPOCH date stamping live in
+# mise.toml, and a second copy here would drift from it. CI supplies only
+# GOOS/GOARCH/OUT.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  # Never cancel a release build mid-flight.
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+    steps:
+      # Full history and tags: mise.toml stamps the version from
+      # `git describe --tags` and the date from the commit time. A shallow
+      # clone has neither, and the binary would silently label itself "dev".
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Installs the Go version pinned in mise.toml.
+      - uses: jdx/mise-action@v4
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          # nn has no cgo dependencies. Off explicitly so the native
+          # linux/amd64 binary is built the same way as the cross-compiled
+          # ones, and needs no particular glibc at runtime.
+          CGO_ENABLED: "0"
+          OUT: dist/nn-${{ matrix.goos }}-${{ matrix.goarch }}
+        # -f because the build task is cached on sources/outputs, and OUT
+        # points somewhere other than the declared output.
+        run: |
+          mkdir -p dist
+          mise run -f build
+          (cd dist && sha256sum "nn-$GOOS-$GOARCH" > "nn-$GOOS-$GOARCH.sha256")
+
+      # Only meaningful where the runner can execute what we just built, but
+      # that is enough to catch a broken ldflags stamp before it ships.
+      - name: Smoke test
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        run: ./dist/nn-linux-amd64 version
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: nn-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/nn-${{ matrix.goos }}-${{ matrix.goarch }}*
+          if-no-files-found: error
+
+  release:
+    name: draft release
+    needs: build
+    # Skipped on workflow_dispatch, which has no tag to release.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          # Flatten all four artifacts into dist/ rather than one
+          # subdirectory per artifact name.
+          merge-multiple: true
+
+      # One checksums.txt over the whole release reads better than four
+      # single-line files, and is what `sha256sum -c` expects to be handed.
+      - name: Collect checksums
+        run: |
+          cd dist
+          cat ./*.sha256 > checksums.txt
+          rm ./*.sha256
+          cat checksums.txt
+
+      # Created as a draft: a pushed tag should not publish on its own.
+      # Review the generated notes, then hit publish.
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --generate-notes \
+            --title "$GITHUB_REF_NAME" \
+            dist/*
