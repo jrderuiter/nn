@@ -1,0 +1,18 @@
+[nono]
+agent = "claude"
+
+[tools.mise]
+
+[tools.git]
+name = "Test User"
+email = "test@example.com"
+
+[tools.github]
+
+[tools.kubernetes]
+context = "prod-eks"
+service_account = "claude-ro"
+service_account_namespace = "apps"
+token_ttl = "1h"
+kubeconfig = "kubeconfig.yaml"
+kubectl = "/usr/local/bin/kubectl"

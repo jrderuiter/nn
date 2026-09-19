@@ -1,0 +1,70 @@
+{
+  "$schema": "https://nono.sh/schemas/nono-profile.schema.json",
+  "extends": [
+    "nolabs-ai/claude"
+  ],
+  "filesystem": {
+    "allow": [
+      "$WORKDIR/.nono/nn"
+    ]
+  },
+  "network": {
+    "credentials": [
+      "github",
+      "github_git"
+    ],
+    "custom_credentials": {
+      "github": {
+        "upstream": "https://api.github.com",
+        "credential_key": "cmd://github",
+        "env_var": "GITHUB_TOKEN",
+        "inject_mode": "header",
+        "inject_header": "Authorization",
+        "credential_format": "token {}"
+      },
+      "github_git": {
+        "upstream": "https://github.com",
+        "credential_key": "cmd://github",
+        "env_var": "GITHUB_GIT_AUTH",
+        "inject_mode": "basic_auth"
+      }
+    }
+  },
+  "environment": {
+    "allow_vars": [
+      "PATH",
+      "HOME",
+      "USER",
+      "SHELL",
+      "TERM",
+      "LANG",
+      "LC_*",
+      "TMPDIR",
+      "ANTHROPIC_*",
+      "CLAUDE_*"
+    ],
+    "set_vars": {
+      "GH_CONFIG_DIR": "$WORKDIR/.nono/nn/gh",
+      "GIT_CONFIG_COUNT": "2",
+      "GIT_CONFIG_KEY_0": "url.https://github.com/.insteadOf",
+      "GIT_CONFIG_KEY_1": "url.https://github.com/.insteadOf",
+      "GIT_CONFIG_VALUE_0": "git@github.com:",
+      "GIT_CONFIG_VALUE_1": "ssh://git@github.com/"
+    }
+  },
+  "workdir": {
+    "access": "readwrite"
+  },
+  "credential_capture": {
+    "github": {
+      "command": [
+        "fnox",
+        "--non-interactive",
+        "get",
+        "GITHUB_TOKEN"
+      ],
+      "timeout_secs": 10,
+      "cache_ttl_secs": 900
+    }
+  }
+}

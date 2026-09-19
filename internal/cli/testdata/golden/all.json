@@ -1,0 +1,117 @@
+{
+  "$schema": "https://nono.sh/schemas/nono-profile.schema.json",
+  "extends": [
+    "nolabs-ai/claude"
+  ],
+  "groups": {
+    "include": [
+      "mise_manager",
+      "git_config"
+    ]
+  },
+  "filesystem": {
+    "allow": [
+      "$WORKDIR/.nono/nn",
+      "$HOME/.local/state/mise",
+      "$HOME/.cache/mise"
+    ]
+  },
+  "network": {
+    "allow_domain": [
+      "ABCDEF.gr7.eu-west-1.eks.amazonaws.com"
+    ],
+    "credentials": [
+      "github",
+      "github_git",
+      "k8s"
+    ],
+    "custom_credentials": {
+      "github": {
+        "upstream": "https://api.github.com",
+        "credential_key": "cmd://github",
+        "env_var": "GITHUB_TOKEN",
+        "inject_mode": "header",
+        "inject_header": "Authorization",
+        "credential_format": "token {}"
+      },
+      "github_git": {
+        "upstream": "https://github.com",
+        "credential_key": "cmd://github",
+        "env_var": "GITHUB_GIT_AUTH",
+        "inject_mode": "basic_auth"
+      },
+      "k8s": {
+        "upstream": "https://ABCDEF.gr7.eu-west-1.eks.amazonaws.com",
+        "credential_key": "cmd://k8s",
+        "env_var": "K8S_TOKEN",
+        "inject_mode": "header",
+        "inject_header": "Authorization",
+        "credential_format": "Bearer {}",
+        "tls_ca": "$WORKDIR/.nono/nn/kube/ca.pem"
+      }
+    }
+  },
+  "environment": {
+    "allow_vars": [
+      "PATH",
+      "HOME",
+      "USER",
+      "SHELL",
+      "TERM",
+      "LANG",
+      "LC_*",
+      "TMPDIR",
+      "ANTHROPIC_*",
+      "CLAUDE_*",
+      "GIT_*",
+      "KUBECONFIG",
+      "KUBECACHEDIR"
+    ],
+    "set_vars": {
+      "GH_CONFIG_DIR": "$WORKDIR/.nono/nn/gh",
+      "GIT_AUTHOR_EMAIL": "test@example.com",
+      "GIT_AUTHOR_NAME": "Test User",
+      "GIT_COMMITTER_EMAIL": "test@example.com",
+      "GIT_COMMITTER_NAME": "Test User",
+      "GIT_CONFIG_COUNT": "2",
+      "GIT_CONFIG_KEY_0": "url.https://github.com/.insteadOf",
+      "GIT_CONFIG_KEY_1": "url.https://github.com/.insteadOf",
+      "GIT_CONFIG_VALUE_0": "git@github.com:",
+      "GIT_CONFIG_VALUE_1": "ssh://git@github.com/",
+      "KUBECACHEDIR": "$WORKDIR/.nono/nn/kube/cache",
+      "KUBECONFIG": "$WORKDIR/.nono/nn/kube/config"
+    }
+  },
+  "workdir": {
+    "access": "readwrite"
+  },
+  "credential_capture": {
+    "github": {
+      "command": [
+        "fnox",
+        "--non-interactive",
+        "get",
+        "GITHUB_TOKEN"
+      ],
+      "timeout_secs": 10,
+      "cache_ttl_secs": 900
+    },
+    "k8s": {
+      "command": [
+        "/usr/local/bin/kubectl",
+        "--kubeconfig",
+        "/TESTDIR/kubeconfig.yaml",
+        "--context",
+        "prod-eks",
+        "create",
+        "token",
+        "claude-ro",
+        "-n",
+        "apps",
+        "--duration=1h"
+      ],
+      "timeout_secs": 30,
+      "cache_ttl_secs": 2880
+    }
+  }
+}
