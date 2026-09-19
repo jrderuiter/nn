@@ -105,7 +105,7 @@ func TestProxyKubeconfigCarriesNoSecret(t *testing.T) {
 	// Verification stays on. kubectl trusts nono's interception certificate
 	// through the reusable authority in the user trust store.
 	if cl.InsecureSkipTLSVerify {
-		t.Fatal("verification must stay on; --trust-proxy-ca is what makes it work")
+		t.Fatal("verification must stay on; nono makes its own authority trusted")
 	}
 	if kc.Contexts[0].Context.Namespace != "apps" {
 		t.Fatalf("wrong namespace: %s", kc.Contexts[0].Context.Namespace)

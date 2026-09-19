@@ -548,9 +548,10 @@ func (p *provider) buildProxy(e *tool.Env) (*tool.Result, error) {
 		},
 	}
 
-	// The runner adds --trust-proxy-ca, because every credential route needs
-	// it. The profile deliberately states no ca_lifecycle: an explicit
-	// "session" there contradicts the flag and nono refuses to start.
+	// On macOS the runner adds --trust-proxy-ca, because a Go client reads the
+	// system trust store there. The profile deliberately states no
+	// ca_lifecycle: an explicit "session" contradicts that flag and nono
+	// refuses to start.
 	return &tool.Result{Fragment: f, Artifacts: artifacts}, nil
 }
 
