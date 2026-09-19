@@ -207,6 +207,41 @@ func execScript(tokenEnv string) string {
 		`"${` + tokenEnv + `:?nono did not set ` + tokenEnv + `}"`
 }
 
+// podKubeconfig builds the kubeconfig that the capture command uses to mint a
+// token from inside a pod.
+//
+// It is not the sandbox's kubeconfig. It never enters the sandbox: nono runs
+// the capture command on the host side, and this file only tells kubectl where
+// the cluster is and which identity to present.
+//
+// kubectl can find all of this by itself in a pod, from KUBERNETES_SERVICE_HOST
+// and the same mounted files. It is spelled out here because nono runs a
+// capture command with a stripped environment, where that detection does not
+// fire.
+//
+// The file holds no credential, only two paths. tokenFile also means kubectl
+// re-reads the token that the kubelet rotates.
+func podKubeconfig(server string, id *podIdentity) ([]byte, error) {
+	const name = "in-cluster"
+	kc := kubeconfig{
+		APIVersion:     "v1",
+		Kind:           "Config",
+		CurrentContext: name,
+		Clusters: []namedCluster{{Name: name, Cluster: cluster{
+			Server:               server,
+			CertificateAuthority: id.CAFile,
+		}}},
+		Contexts: []namedContext{{
+			Name:    name,
+			Context: ctxDetails{Cluster: name, User: name, Namespace: id.Namespace},
+		}},
+		Users: []namedUser{{Name: name, User: map[string]any{
+			"tokenFile": id.TokenFile,
+		}}},
+	}
+	return yaml.Marshal(kc)
+}
+
 // directKubeconfig builds a single-context kubeconfig that carries the host
 // context's own credentials. It is the fallback when no service account is
 // configured, and it is weaker because the credential lands inside the sandbox.

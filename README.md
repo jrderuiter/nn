@@ -58,9 +58,10 @@ what `nn example` writes. Each tool allows the hosts it needs on top of that,
 and `allow_domain` adds any others the project needs.
 
 `nn` reads `~/.config/nn/config.toml` first, then the nearest `nn.toml` found by
-walking up from the working directory, then the environment. Layers merge per
-key, so a project file adds to a tool that the user file declares. It does not
-replace the tool. `nn example` prints a complete file to start from:
+walking up from the working directory, then `nn.local.toml` beside it, then the
+environment. Layers merge per key, so a project file adds to a tool that the
+user file declares. It does not replace the tool. `nn example` prints a complete
+file to start from:
 
 ```
 nn example > nn.toml
@@ -92,6 +93,26 @@ service_account_namespace = "apps"
 A `[tools.<name>]` section turns that tool on. A runtime takes no configuration,
 so its section is empty.
 
+### Machine differences
+
+Commit `nn.toml`, and put whatever differs per machine in `nn.local.toml` beside
+it. Add that name to `.gitignore`. The local file merges into the committed one
+per key, so it changes one setting and leaves the rest of the table alone:
+
+```toml
+# nn.toml, committed
+[tools.kubernetes]
+service_account = "claude-ro"
+
+# nn.local.toml, yours only
+[tools.kubernetes]
+kubectl = "/opt/homebrew/bin/kubectl"
+```
+
+A list is the exception, because a later layer replaces a list rather than
+adding to it. The local file belongs to the `nn.toml` that was found, so `nn`
+does not look for it on its own.
+
 ### Environment variables
 
 Every value can also come from the environment: `NN_` plus the key path in
@@ -103,6 +124,7 @@ upper case, with dots as underscores.
 | `NN_NONO_EXTENDS` | `nono.extends`, comma separated |
 | `NN_NONO_ALLOW_DOMAIN` | `nono.allow_domain`, comma separated |
 | `NN_TOOLS_KUBERNETES_CONTEXT` | `tools.kubernetes.context` |
+| `NN_TOOLS_KUBERNETES_IN_CLUSTER` | `tools.kubernetes.in_cluster` |
 | `NN_TOOLS_KUBERNETES_SERVICE_ACCOUNT_NAMESPACE` | `tools.kubernetes.service_account_namespace` |
 | `NN_TOOLS_GITHUB_SECRET` | `tools.github.secret` |
 | `NN_TOOLS_MISE` | turns the `mise` tool on, or off with a false value |
@@ -164,6 +186,45 @@ itself holds no credential. A cluster with an exec plugin, such as EKS or GKE,
 works, because the plugin runs on the host. Without `service_account`, `nn`
 writes a plain kubeconfig that carries the credentials of the context. That form
 puts them inside the sandbox, and it does not work for an exec plugin context.
+
+#### In a pod
+
+A pod has no kubeconfig. It has the identity the kubelet mounts at
+`/var/run/secrets/kubernetes.io/serviceaccount`: a bearer token, the cluster
+certificate authority, and the namespace. Set `in_cluster` and `nn` builds the
+same access out of those instead.
+
+```
+NN_TOOLS_KUBERNETES_IN_CLUSTER=true
+```
+
+Set it from the pod spec, so one committed `nn.toml` serves a laptop and a pod.
+`nn` never detects the mode on its own. A guess would make the same command
+reach a different cluster in a different place, with nothing in the file to say
+so.
+
+The credential form does not change. The capture command reads the mounted token
+on the host side, once a minute, which is how the rotation the kubelet performs
+reaches the proxy. The token never enters the sandbox, and the sandbox needs no
+`kubectl` to get one. The certificate authority is the mounted `ca.crt`, so
+neither `cluster_ca` nor `allow_missing_ca` is needed.
+
+The API server is `https://kubernetes.default.svc`, not the address in
+`KUBERNETES_SERVICE_HOST`. It is a name rather than a cluster IP, which is what
+the allowlist and the TLS interception both want. `api_server` overrides it.
+
+`service_account` still narrows the identity, but only when it names an account
+other than the one the pod already runs as. `nn` reads that name from the
+mounted token. Minting for a different account needs `kubectl` in the image and
+RBAC on `serviceaccounts/token`. Naming the pod's own account changes nothing,
+so the key is safe to leave in a shared file.
+
+Four keys are refused with `in_cluster`, because each describes a kubeconfig
+that a pod does not have: `context`, `kubeconfig`, `cluster_ca` and
+`allow_missing_ca`. An empty environment value drops one for a single run, for
+example `NN_TOOLS_KUBERNETES_CONTEXT=`. A file meant for both places is simpler
+without `context`, since an unset `context` already means the current one.
+`token_ttl` applies only when `nn` mints a token, not to the mounted one.
 
 `nn` never creates service accounts or RBAC, and generates no per-endpoint
 rules. The permissions of the account are what limit the agent. Two keys exist
@@ -246,6 +307,7 @@ Everything `nn` generates lands in `.nono/nn/` inside the project, with a
 .nono/nn/profile.json     the merged nono profile
 .nono/nn/kube/config      the generated kubeconfig, mode 0600
 .nono/nn/kube/ca.pem      the cluster certificate authority
+.nono/nn/kube/host.yaml   the kubeconfig the token command uses, in a pod
 .nono/nn/gh/              the gh CLI configuration, kept away from the host
 ```
 
