@@ -264,6 +264,7 @@ Tasks live in `mise.toml`:
 
 ```
 mise run build         build bin/nn
+mise run dist          build for macOS and Linux, amd64 and arm64
 mise run test          unit and golden tests
 mise run golden        rewrite the golden profiles
 mise run integration   tests that need the real nono binary
