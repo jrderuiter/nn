@@ -18,6 +18,8 @@
   },
   "network": {
     "allow_domain": [
+      "api.github.com",
+      "github.com",
       "ABCDEF.gr7.eu-west-1.eks.amazonaws.com"
     ],
     "credentials": [
@@ -60,12 +62,7 @@
       "TERM",
       "LANG",
       "LC_*",
-      "TMPDIR",
-      "ANTHROPIC_*",
-      "CLAUDE_*",
-      "GIT_*",
-      "KUBECONFIG",
-      "KUBECACHEDIR"
+      "TMPDIR"
     ],
     "set_vars": {
       "GH_CONFIG_DIR": "$WORKDIR/.nono/nn/gh",

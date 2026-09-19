@@ -106,3 +106,28 @@ func assertProfilePathsArePortable(t *testing.T, p *plan) {
 		t.Errorf("the generated profile leaks an absolute path:\n%s", body)
 	}
 }
+
+// allow_domain lets a project name hosts that no tool asks for.
+func TestAllowDomainFromTheConfiguration(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nn.toml")
+	body := "[nono]\nnetwork_profile = \"minimal\"\nallow_domain = [\"proxy.golang.org\"]\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	saved := opts
+	t.Cleanup(func() { opts = saved })
+	opts = options{workdir: dir, configPath: path}
+
+	p, err := build(context.Background(), opts, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := p.profile.Network
+	if n == nil || n.NetworkProfile != "minimal" {
+		t.Fatalf("got %+v", n)
+	}
+	if len(n.AllowDomain) != 1 || n.AllowDomain[0].Domain != "proxy.golang.org" {
+		t.Fatalf("got %+v", n.AllowDomain)
+	}
+}

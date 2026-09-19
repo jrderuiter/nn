@@ -49,7 +49,7 @@ func TestRunArgsKeepsChildFlagsAfterTheSeparator(t *testing.T) {
 // A few profile fields resolve $WORKDIR from the environment instead of
 // expanding it, so nono itself has to see the variable.
 func TestEnvSetsWorkdir(t *testing.T) {
-	got := Env("/p")
+	got := Env("/p", "")
 	found := 0
 	for _, kv := range got {
 		if kv == "WORKDIR=/p" {
@@ -65,7 +65,7 @@ func TestEnvSetsWorkdir(t *testing.T) {
 // inherits two and the winner depends on the platform.
 func TestEnvReplacesAnExistingWorkdir(t *testing.T) {
 	t.Setenv("WORKDIR", "/stale")
-	for _, kv := range Env("/p") {
+	for _, kv := range Env("/p", "") {
 		if kv == "WORKDIR=/stale" {
 			t.Fatal("the stale value is still present")
 		}
@@ -92,5 +92,44 @@ func TestRunArgsCanShowBothAgain(t *testing.T) {
 		if strings.Contains(got, unwanted) {
 			t.Errorf("did not expect %s in %s", unwanted, got)
 		}
+	}
+}
+
+// HERDR_AGENT names the agent that the sandboxed command runs, for tools on
+// the host. It is not in allow_vars, so it stops at nono.
+func TestEnvSetsTheAgent(t *testing.T) {
+	var got string
+	for _, kv := range Env("/p", "claude") {
+		if strings.HasPrefix(kv, "HERDR_AGENT=") {
+			got = kv
+		}
+	}
+	if got != "HERDR_AGENT=claude" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+// An unknown command sets nothing, rather than guessing a name.
+func TestEnvOmitsTheAgentWhenUnknown(t *testing.T) {
+	for _, kv := range Env("/p", "") {
+		if strings.HasPrefix(kv, "HERDR_AGENT=") {
+			t.Fatalf("expected no agent, got %q", kv)
+		}
+	}
+}
+
+func TestEnvReplacesAnExistingAgent(t *testing.T) {
+	t.Setenv("HERDR_AGENT", "stale")
+	count := 0
+	for _, kv := range Env("/p", "codex") {
+		if strings.HasPrefix(kv, "HERDR_AGENT=") {
+			count++
+			if kv != "HERDR_AGENT=codex" {
+				t.Errorf("got %q", kv)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly one entry, got %d", count)
 	}
 }

@@ -17,8 +17,8 @@ func newDoctorCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "doctor",
 		Short: "Check the configuration and everything it depends on",
-		Long: "doctor reads the configuration, runs every tool's own check, and validates\n" +
-			"the profile those tools produce. It writes nothing and runs nothing.",
+		Long: "doctor reads the configuration, tests every tool, and makes sure that the\n" +
+			"profile those tools produce is valid. It writes nothing and runs nothing.",
 		SilenceUsage: true,
 		Args:         cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {

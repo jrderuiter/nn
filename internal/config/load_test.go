@@ -19,7 +19,7 @@ func write(t *testing.T, path, body string) {
 
 func TestFindWalksUp(t *testing.T) {
 	root := t.TempDir()
-	write(t, filepath.Join(root, "nn.toml"), "[nono]\nagent = \"claude\"\n")
+	write(t, filepath.Join(root, "nn.toml"), "[nono]\nnetwork_profile = \"claude-code\"\n")
 	deep := filepath.Join(root, "a", "b", "c")
 	if err := os.MkdirAll(deep, 0o755); err != nil {
 		t.Fatal(err)
@@ -28,8 +28,8 @@ func TestFindWalksUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Nono.Agent != "claude" {
-		t.Fatalf("expected the parent configuration to apply, got %q", cfg.Nono.Agent)
+	if cfg.Nono.NetworkProfile != "claude-code" {
+		t.Fatalf("expected the parent configuration to apply, got %q", cfg.Nono.NetworkProfile)
 	}
 }
 
@@ -37,15 +37,15 @@ func TestFindWalksUp(t *testing.T) {
 // would silently widen the sandbox of an unrelated project.
 func TestFindStopsAtARepositoryBoundary(t *testing.T) {
 	root := t.TempDir()
-	write(t, filepath.Join(root, "nn.toml"), "[nono]\nagent = \"claude\"\n")
+	write(t, filepath.Join(root, "nn.toml"), "[nono]\nnetwork_profile = \"claude-code\"\n")
 	inner := filepath.Join(root, "vendor", "other")
 	write(t, filepath.Join(inner, ".git", "HEAD"), "ref: refs/heads/main\n")
 	cfg, err := Load(Options{Dir: inner, Explicit: ""})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Nono.Agent != "" {
-		t.Fatalf("a nested repository must not pick up the parent configuration, got %q", cfg.Nono.Agent)
+	if cfg.Nono.NetworkProfile != "" {
+		t.Fatalf("a nested repository must not pick up the parent configuration, got %q", cfg.Nono.NetworkProfile)
 	}
 }
 
@@ -87,15 +87,15 @@ func TestToolTablesAreLeftToTheProviders(t *testing.T) {
 
 func TestExplicitPathSkipsTheSearch(t *testing.T) {
 	root := t.TempDir()
-	write(t, filepath.Join(root, "nn.toml"), "[nono]\nagent = \"claude\"\n")
+	write(t, filepath.Join(root, "nn.toml"), "[nono]\nnetwork_profile = \"claude-code\"\n")
 	other := filepath.Join(root, "other.toml")
-	write(t, other, "[nono]\nagent = \"codex\"\n")
+	write(t, other, "[nono]\nnetwork_profile = \"developer\"\n")
 	cfg, err := Load(Options{Dir: root, Explicit: other})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Nono.Agent != "codex" {
-		t.Fatalf("the explicit file must win, got %q", cfg.Nono.Agent)
+	if cfg.Nono.NetworkProfile != "developer" {
+		t.Fatalf("the explicit file must win, got %q", cfg.Nono.NetworkProfile)
 	}
 }
 
@@ -103,7 +103,7 @@ var testKeys = []Key{
 	{Path: "tools.mise", Enable: true},
 	{Path: "tools.go", Enable: true},
 	{Path: "tools.github", Enable: true},
-	{Path: "nono.agent"},
+
 	{Path: "nono.extends", List: true},
 	{Path: "nono.network_profile"},
 	{Path: "tools.kubernetes.context"},
@@ -113,14 +113,14 @@ var testKeys = []Key{
 
 func TestEnvSetsAValue(t *testing.T) {
 	root := t.TempDir()
-	write(t, filepath.Join(root, "nn.toml"), "[nono]\nagent = \"claude\"\n")
-	t.Setenv("NN_NONO_AGENT", "codex")
+	write(t, filepath.Join(root, "nn.toml"), "[nono]\nnetwork_profile = \"claude-code\"\n")
+	t.Setenv("NN_NONO_NETWORK_PROFILE", "developer")
 	cfg, err := Load(Options{Dir: root, Keys: testKeys})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Nono.Agent != "codex" {
-		t.Fatalf("the environment must win over the file, got %q", cfg.Nono.Agent)
+	if cfg.Nono.NetworkProfile != "developer" {
+		t.Fatalf("the environment must win over the file, got %q", cfg.Nono.NetworkProfile)
 	}
 }
 
@@ -231,12 +231,12 @@ func TestEnvEnableKeepsExistingSettings(t *testing.T) {
 
 func TestEnvLeavesUnsetKeysAlone(t *testing.T) {
 	root := t.TempDir()
-	write(t, filepath.Join(root, "nn.toml"), "[nono]\nagent = \"claude\"\n")
+	write(t, filepath.Join(root, "nn.toml"), "[nono]\nnetwork_profile = \"claude-code\"\n")
 	cfg, err := Load(Options{Dir: root, Keys: testKeys})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Nono.Agent != "claude" {
-		t.Fatalf("got %q", cfg.Nono.Agent)
+	if cfg.Nono.NetworkProfile != "claude-code" {
+		t.Fatalf("got %q", cfg.Nono.NetworkProfile)
 	}
 }

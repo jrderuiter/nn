@@ -1,9 +1,7 @@
 [nono]
-agent = "claude"
+extends = ["nolabs-ai/claude"]
 network_profile = "claude-code"
 
-# Language runtimes and version managers. Writing the section turns it on. Each
-# adds a nono group plus the writable caches and variables that group leaves out.
 [tools.mise]
 
 [tools.go]
