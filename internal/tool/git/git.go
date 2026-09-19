@@ -1,11 +1,14 @@
-// Package git grants the parts of a git setup that a sandboxed agent needs:
-// the host SSH agent, a committer identity, and the hosts it may reach.
+// Package git grants the parts of a git setup that a sandboxed agent needs: a
+// committer identity, the host git configuration, and the hosts it may reach.
+//
+// It does not pass the host ssh agent socket through. Pushing over ssh would
+// need that socket, and the github tool rewrites github.com remotes to HTTPS
+// instead, where the proxy injects a token that the sandbox never sees.
 package git
 
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/BurntSushi/toml"
 
@@ -15,9 +18,6 @@ import (
 
 // Config is the [tools.git] table.
 type Config struct {
-	// SSH grants the host SSH agent socket, so the agent can push over SSH
-	// without ever seeing a private key.
-	SSH bool `toml:"ssh" help:"pass the host ssh agent socket through"`
 	// Name and Email set the committer identity inside the sandbox.
 	Name  string `toml:"name" help:"committer name inside the sandbox"`
 	Email string `toml:"email" help:"committer email inside the sandbox"`
@@ -29,8 +29,13 @@ type Config struct {
 
 type provider struct{ cfg Config }
 
-func init() { tool.Register("git", New, func() any { on := true; return &Config{Config: &on} }) }
+func init() {
+	// The prototype describes the shape, not the defaults: it is only read for
+	// the field names the environment can set.
+	tool.Register("git", New, func() any { return &Config{} })
+}
 
+// New decodes the tool's own table.
 func New(md toml.MetaData, prim toml.Primitive) (tool.Provider, error) {
 	// Left nil and defaulted afterwards: the decoder writes through an
 	// existing pointer, so a pre-filled default would be overwritten in place.
@@ -50,39 +55,16 @@ func New(md toml.MetaData, prim toml.Primitive) (tool.Provider, error) {
 
 func (p *provider) Name() string { return "git" }
 
-func (p *provider) Preflight(ctx context.Context, e *tool.Env) error {
-	if !p.cfg.SSH {
-		return nil
-	}
-	sock, ok := e.Lookup("SSH_AUTH_SOCK")
-	if !ok || sock == "" {
-		return fmt.Errorf("ssh = true but SSH_AUTH_SOCK is not set on the host; start an ssh agent or set ssh = false")
-	}
-	if _, err := os.Stat(sock); err != nil {
-		return fmt.Errorf("SSH_AUTH_SOCK points at %s, which is not reachable: %w", sock, err)
-	}
-	return nil
-}
+func (p *provider) Preflight(ctx context.Context, e *tool.Env) error { return nil }
 
 func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error) {
-	f := &nono.Profile{
-		Environment: &nono.Environment{AllowVars: []string{"GIT_*"}},
-	}
+	// No allow_vars. The identity below goes through set_vars, which nono
+	// applies after the filter, so passing host GIT_* variables would only
+	// widen what the sandbox inherits.
+	f := &nono.Profile{Environment: &nono.Environment{}}
 
 	if *p.cfg.Config {
 		f.Groups = &nono.Groups{Include: []nono.CondName{nono.G("git_config")}}
-	}
-
-	if p.cfg.SSH {
-		sock, _ := e.Lookup("SSH_AUTH_SOCK")
-		// unix_socket grants connect on the socket itself and implies read on
-		// that file. A plain filesystem grant is not enough once the network
-		// filter is active.
-		f.Filesystem = &nono.Filesystem{UnixSocket: []nono.CondPath{nono.P(sock)}}
-		// The variable only goes through when the socket behind it does. With
-		// ssh off it would name a path the sandbox cannot reach, which turns a
-		// clear configuration choice into a confusing connection error.
-		f.Environment.AllowVars = append(f.Environment.AllowVars, "SSH_AUTH_SOCK")
 	}
 
 	if p.cfg.Name != "" {

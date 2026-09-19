@@ -325,8 +325,8 @@ func (p *provider) buildProxy(e *tool.Env) (*tool.Result, error) {
 		Environment: &nono.Environment{
 			// KUBERNETES_* is what a kubelet sets inside a pod; nothing here
 			// produces it. The phantom token needs no entry either: nono
-			// injects it after this filter runs.
-			AllowVars: []string{"KUBECONFIG", "KUBECACHEDIR"},
+			// injects it after this filter runs, and both names below go
+			// through set_vars, which nono applies after it too.
 			SetVars: map[string]string{
 				"KUBECONFIG": kubeDir + "/config",
 				// kubectl writes a discovery cache. Left alone it uses
@@ -379,7 +379,6 @@ func (p *provider) buildDirect(e *tool.Env) (*tool.Result, error) {
 	f := &nono.Profile{
 		Network: &nono.Network{AllowDomain: []nono.Domain{{Domain: hostOnly(p.host)}}},
 		Environment: &nono.Environment{
-			AllowVars: []string{"KUBECONFIG", "KUBECACHEDIR"},
 			SetVars: map[string]string{
 				"KUBECONFIG":   kubeDir + "/config",
 				"KUBECACHEDIR": kubeDir + "/cache",

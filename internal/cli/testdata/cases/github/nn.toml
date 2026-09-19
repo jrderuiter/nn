@@ -1,5 +1,5 @@
 [nono]
-agent = "claude"
+extends = ["nolabs-ai/claude"]
 
 [fnox]
 binary = "fnox"

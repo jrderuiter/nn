@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jrderuiter/nn/internal/agent"
 	"github.com/jrderuiter/nn/internal/config"
 	"github.com/jrderuiter/nn/internal/nono"
 	"github.com/jrderuiter/nn/internal/secrets"
@@ -28,9 +27,9 @@ import (
 // keys, plus one per setting of every registered tool.
 func envKeys() []config.Key {
 	keys := []config.Key{
-		{Path: "nono.agent"},
 		{Path: "nono.extends", List: true},
 		{Path: "nono.groups", List: true},
+		{Path: "nono.allow_domain", List: true},
 		{Path: "nono.network_profile"},
 		{Path: "fnox.binary"},
 		{Path: "fnox.config"},
@@ -142,7 +141,7 @@ func build(ctx context.Context, opts options, command []string) (*plan, error) {
 		return nil, err
 	}
 
-	base := baseProfile(cfg, command)
+	base := baseProfile(cfg)
 	m := nono.NewMerger(base)
 	var artifacts []tool.Artifact
 	var ensure []string
@@ -233,33 +232,27 @@ func buildProviders(ctx context.Context, providers []tool.Provider,
 }
 
 // baseProfile is the layer that every run starts from.
-func baseProfile(cfg *config.Config, command []string) *nono.Profile {
+func baseProfile(cfg *config.Config) *nono.Profile {
 	p := &nono.Profile{
 		Schema:  nono.SchemaURL,
 		Workdir: &nono.Workdir{Access: "readwrite"},
 		// The working directory is already granted, by --allow-cwd together
 		// with the access level below, and a directory grant is recursive. The
 		// artifact directory is named anyway so that generated files stay
-		// writable if someone narrows workdir.access through the [nono] block.
+		// writable if someone narrows workdir.access through [nono.profile].
 		Filesystem: &nono.Filesystem{
 			Allow: []nono.CondPath{nono.P(workspace.ProfileVar)},
 		},
 		Environment: &nono.Environment{AllowVars: append([]string{}, baseAllowVars...)},
 	}
 
-	// nn.toml wins over the command name.
-	name := cfg.Nono.Agent
-	if name == "" && len(command) > 0 {
-		name = command[0]
-	}
-	if a, ok := agent.Lookup(name); ok {
-		p.Extends = append(p.Extends, a.Extends)
-		p.Environment.AllowVars = append(p.Environment.AllowVars, a.AllowVars...)
-	}
 	p.Extends = append(p.Extends, cfg.Nono.Extends...)
 
-	if cfg.Nono.NetworkProfile != "" {
+	if cfg.Nono.NetworkProfile != "" || len(cfg.Nono.AllowDomain) != 0 {
 		p.Network = &nono.Network{NetworkProfile: cfg.Nono.NetworkProfile}
+		for _, d := range cfg.Nono.AllowDomain {
+			p.Network.AllowDomain = append(p.Network.AllowDomain, nono.Domain{Domain: d})
+		}
 	}
 
 	for _, g := range cfg.Nono.Groups {
@@ -300,6 +293,9 @@ func (p *plan) trace(args []string) {
 		fmt.Fprintf(os.Stderr, "nn: artifact  %s\n", p.ws.Path(a.RelPath))
 	}
 	fmt.Fprintf(os.Stderr, "nn: WORKDIR   %s\n", p.ws.Workdir)
+	if a := agentName(p.command); a != "" {
+		fmt.Fprintf(os.Stderr, "nn: agent     %s\n", a)
+	}
 	fmt.Fprintf(os.Stderr, "nn: exec      nono %s\n", strings.Join(quoteArgs(args), " "))
 }
 

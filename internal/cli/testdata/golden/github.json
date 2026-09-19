@@ -9,6 +9,10 @@
     ]
   },
   "network": {
+    "allow_domain": [
+      "api.github.com",
+      "github.com"
+    ],
     "credentials": [
       "github",
       "github_git"
@@ -39,9 +43,7 @@
       "TERM",
       "LANG",
       "LC_*",
-      "TMPDIR",
-      "ANTHROPIC_*",
-      "CLAUDE_*"
+      "TMPDIR"
     ],
     "set_vars": {
       "GH_CONFIG_DIR": "$WORKDIR/.nono/nn/gh",

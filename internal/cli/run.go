@@ -42,5 +42,5 @@ func newRunCmd() *cobra.Command {
 }
 
 func execPlan(p *plan) error {
-	return nono.Exec(p.runArgs(), nono.Env(p.ws.Workdir))
+	return nono.Exec(p.runArgs(), nono.Env(p.ws.Workdir, agentName(p.command)))
 }

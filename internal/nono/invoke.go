@@ -103,21 +103,38 @@ func (a RunArgs) Build() []string {
 // WORKDIR is set because a few profile fields, such as a credential route's
 // tls_ca, resolve that name from the environment rather than expanding it
 // themselves. Setting it here keeps those paths relative, so a generated
-// profile stays portable between machines. The variable reaches nono only: the
-// generated allow_vars list does not carry it into the sandbox.
-func Env(workdir string) []string {
-	env := os.Environ()
-	if workdir == "" {
-		return env
+// profile stays portable between machines.
+//
+// HERDR_AGENT names the agent that the sandboxed command runs, for tools on the
+// host that read it. It is left out when the command is not a known agent, and
+// it is not in the generated allow_vars list, so it reaches nono and stops
+// there.
+func Env(workdir, agent string) []string {
+	vars := map[string]string{}
+	if workdir != "" {
+		vars["WORKDIR"] = workdir
 	}
-	out := make([]string, 0, len(env)+1)
-	for _, kv := range env {
-		if strings.HasPrefix(kv, "WORKDIR=") {
+	if agent != "" {
+		vars["HERDR_AGENT"] = agent
+	}
+	if len(vars) == 0 {
+		return os.Environ()
+	}
+	out := make([]string, 0, len(os.Environ())+len(vars))
+	for _, kv := range os.Environ() {
+		name, _, _ := strings.Cut(kv, "=")
+		if _, replaced := vars[name]; replaced {
 			continue
 		}
 		out = append(out, kv)
 	}
-	return append(out, "WORKDIR="+workdir)
+	// Sorted, so the environment nn hands over does not depend on map order.
+	for _, name := range []string{"HERDR_AGENT", "WORKDIR"} {
+		if v, ok := vars[name]; ok {
+			out = append(out, name+"="+v)
+		}
+	}
+	return out
 }
 
 // Exec replaces the current process with nono. Handing the terminal straight

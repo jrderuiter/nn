@@ -9,7 +9,7 @@ import (
 	"github.com/jrderuiter/nn/internal/tool"
 )
 
-func build(t *testing.T, body string, sock string) *tool.Result {
+func build(t *testing.T, body string) *tool.Result {
 	t.Helper()
 	var cfg struct {
 		Tools map[string]toml.Primitive `toml:"tools"`
@@ -22,48 +22,11 @@ func build(t *testing.T, body string, sock string) *tool.Result {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := p.Build(context.Background(), &tool.Env{
-		Workdir: "/w",
-		Lookup: func(k string) (string, bool) {
-			if k == "SSH_AUTH_SOCK" {
-				return sock, sock != ""
-			}
-			return "", false
-		},
-	})
+	r, err := p.Build(context.Background(), &tool.Env{Workdir: "/w"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return r
-}
-
-func has(list []string, want string) bool {
-	for _, v := range list {
-		if v == want {
-			return true
-		}
-	}
-	return false
-}
-
-// SSH_AUTH_SOCK names a socket. Passing the name without granting the socket
-// only turns a clear configuration choice into a connection error.
-func TestSSHAuthSockIsAllowedOnlyWithTheSocket(t *testing.T) {
-	off := build(t, "", "")
-	if has(off.Fragment.Environment.AllowVars, "SSH_AUTH_SOCK") {
-		t.Error("with ssh off the variable must not be allowed through")
-	}
-	if off.Fragment.Filesystem != nil {
-		t.Error("with ssh off no socket is granted")
-	}
-
-	on := build(t, "ssh = true\n", "/tmp/agent.sock")
-	if !has(on.Fragment.Environment.AllowVars, "SSH_AUTH_SOCK") {
-		t.Error("with ssh on the variable has to come through")
-	}
-	if len(on.Fragment.Filesystem.UnixSocket) != 1 {
-		t.Error("with ssh on the socket has to be granted")
-	}
 }
 
 func TestIdentityNeedsBothHalves(t *testing.T) {
@@ -73,5 +36,20 @@ func TestIdentityNeedsBothHalves(t *testing.T) {
 	md, _ := toml.Decode("[tools.git]\nname = \"Jane\"\n", &cfg)
 	if _, err := New(md, cfg.Tools["git"]); err == nil {
 		t.Fatal("a name without an email must be an error")
+	}
+}
+
+// A tool must not pass host variables through for its own settings: set_vars
+// reaches the sandbox after the filter.
+func TestNoHostVariablePassesThrough(t *testing.T) {
+	r := build(t, "name = \"Jane\"\nemail = \"jane@example.com\"\n")
+	if len(r.Fragment.Environment.AllowVars) != 0 {
+		t.Fatalf("no host variable should pass through, got %v", r.Fragment.Environment.AllowVars)
+	}
+	if r.Fragment.Filesystem != nil {
+		t.Fatalf("the git tool grants no path of its own, got %+v", r.Fragment.Filesystem)
+	}
+	if r.Fragment.Environment.SetVars["GIT_AUTHOR_NAME"] != "Jane" {
+		t.Fatal("the identity must still be set")
 	}
 }

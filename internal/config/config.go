@@ -33,20 +33,21 @@ type Config struct {
 
 // Nono is the [nono] section.
 type Nono struct {
-	// Agent names the agent whose base profile to use. When empty, nn infers
-	// it from the command after --.
-	Agent string `toml:"agent"`
-	// Extends adds nono base profiles, so hand written mixins such as jr/mise
-	// keep working next to generated capabilities.
+	// Extends adds nono profiles by name, which is how an agent pack such as
+	// nolabs-ai/claude and hand written mixins such as jr/mise come in.
 	Extends []string `toml:"extends"`
 	// Groups adds nono policy groups by name.
 	Groups []string `toml:"groups"`
+	// AllowDomain adds hosts to the network allowlist, on top of whatever the
+	// network profile and the tools allow. Wildcards follow nono's grammar,
+	// where *.example.com matches one label or more below example.com.
+	AllowDomain []string `toml:"allow_domain"`
 	// NetworkProfile selects one of nono's built in network allowlists, such
-	// as "developer" or "claude-code". It widens what the sandbox can reach,
-	// so nn never sets it on its own.
+	// as "developer" or "claude-code". Without one, nono leaves egress
+	// unrestricted, so naming a profile narrows what the sandbox can reach.
 	NetworkProfile string `toml:"network_profile"`
-	// Profile is a raw profile fragment for anything that has no provider yet.
-	// It applies after every capability, so a hand written rule always wins.
+	// Profile is a raw profile fragment for anything that has no tool yet.
+	// It applies after every tool, so a hand written rule always wins.
 	// Its keys are spelled exactly as they are in a nono profile.
 	Profile toml.Primitive `toml:"profile"`
 }

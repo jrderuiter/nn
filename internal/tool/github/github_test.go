@@ -117,3 +117,24 @@ func TestBothRoutesShareOneCapture(t *testing.T) {
 		}
 	}
 }
+
+// A credential route only injects a credential. The host still has to be in
+// the allowlist, or a narrow network profile blocks it first.
+func TestBothHostsAreAllowed(t *testing.T) {
+	got := map[string]bool{}
+	for _, d := range build(t, "").Fragment.Network.AllowDomain {
+		got[d.Domain] = true
+	}
+	for _, want := range []string{"api.github.com", "github.com"} {
+		if !got[want] {
+			t.Errorf("%s is not in the allowlist", want)
+		}
+	}
+}
+
+func TestGitOffAllowsOnlyTheAPIHost(t *testing.T) {
+	doms := build(t, "git = false\n").Fragment.Network.AllowDomain
+	if len(doms) != 1 || doms[0].Domain != "api.github.com" {
+		t.Fatalf("got %+v", doms)
+	}
+}

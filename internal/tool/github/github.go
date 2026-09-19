@@ -76,6 +76,10 @@ func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error)
 			"github": {Command: capture, TimeoutSecs: 10, CacheTTLSecs: p.cfg.CacheTTLSecs},
 		},
 		Network: &nono.Network{
+			// The routes below only inject a credential. The hosts still have
+			// to be in the allowlist, or a narrow network profile blocks them
+			// before the proxy is reached.
+			AllowDomain: []nono.Domain{{Domain: "api.github.com"}},
 			Credentials: []string{"github"},
 			CustomCredentials: map[string]nono.CustomCredential{
 				"github": {
@@ -99,6 +103,7 @@ func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error)
 		// the API host, and it authenticates with basic auth rather than a
 		// bearer header. It shares the one capture: the token is the same, and
 		// a second capture would mean a second fnox call and a second cache.
+		f.Network.AllowDomain = append(f.Network.AllowDomain, nono.Domain{Domain: "github.com"})
 		f.Network.Credentials = append(f.Network.Credentials, "github_git")
 		f.Network.CustomCredentials["github_git"] = nono.CustomCredential{
 			Upstream:      "https://github.com",
