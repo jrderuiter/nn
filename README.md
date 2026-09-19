@@ -19,7 +19,8 @@ small mixin profiles. Mixins cannot be templated, so a cluster name or a
 context has to be written out by hand for every project.
 
 `nn` does not replace profiles and does not re-implement sandboxing. It
-generates profiles, so `nn profile` on its own stays useful.
+generates them, so `nn init` on its own stays useful: it writes the profile and
+stops, ready to read, keep, or hand to nono directly.
 
 ## Install
 
@@ -33,17 +34,13 @@ go install github.com/jrderuiter/nn@latest
 ## Getting started
 
 ```
-nn init
+nn example > nn.toml
 nn doctor
 nn -- claude
 ```
 
-`nn init` looks at the project and writes an `nn.toml` to match: the toolchains
-it can see from `go.mod`, `package.json`, `.mise.toml` and the like, your git
-identity, and the repository your origin remote points at. Anything that needs a
-secret or a cluster is written out but left commented, so `nn -- claude` works
-straight away and you turn the rest on when you are ready. Pass `--force` to
-replace an existing file.
+`nn example` prints a complete configuration with every section and setting, the
+optional ones commented. Edit it down, check it with `nn doctor`, and run.
 
 ## Configuration
 
@@ -110,9 +107,7 @@ false value (`false`, `0`, `no`, `off` or empty) removes the tool, which is how
 a project default is dropped for one run. Turning a tool on never clears
 settings its section already carries.
 
-### Capabilities
-
-
+### Tools
 
 | Tool | What it grants |
 | --- | --- |
@@ -137,55 +132,29 @@ fnox set GITHUB_TOKEN --provider op
 
 ### Kubernetes
 
-nono has no Kubernetes feature, so `nn` assembles the access out of generic
-nono parts.
+nono has no Kubernetes feature, so `nn` builds the access out of generic parts.
 
 With `service_account` set, `nn` writes a kubeconfig pointing at the real API
-server, and a `credential_capture` entry that runs `kubectl create token` on the
-host. nono mints the token outside the sandbox with your own cluster
-credentials, caches it, intercepts the connection and adds it as a bearer
-header. The kubeconfig holds no credential at all. This works for a cluster
-whose kubeconfig uses an exec plugin, such as EKS or GKE, because the plugin
-runs on the host.
+server and a `credential_capture` that runs `kubectl create token` on the host.
+nono mints the token outside the sandbox with your own credentials, intercepts
+the connection and adds it as a bearer header, so the kubeconfig holds no
+credential. Exec plugin clusters such as EKS and GKE work, because the plugin
+runs on the host. Without `service_account`, `nn` falls back to a plain
+kubeconfig carrying the context's own credentials, which puts them inside the
+sandbox and does not work for an exec plugin context.
 
-Injecting a header means intercepting TLS, so kubectl is served a certificate
-that nono signs. kubectl ignores the trust bundle variables that nono sets,
-because Go reads the macOS system store instead, so `nn` passes
-`--trust-proxy-ca`. nono then keeps one reusable authority in your user trust
-store. The generated profile states no `ca_lifecycle`, because an explicit value
-there contradicts the flag and nono refuses to start. Expect a keychain prompt the first
-time. The cluster's own certificate is still checked, by nono, on the leg
-between the proxy and the API server, using the authority that `nn` extracts
-into `.nono/nn/kube/ca.pem`.
+`nn` never creates service accounts or RBAC, and generates no per-endpoint
+rules: the account's permissions are what limit the agent. Two settings exist
+because of how the pieces fit together. `kubectl` should be a real binary, not a
+version manager shim, because nono runs the token command with a stripped
+environment. `cluster_ca` supplies the cluster authority when the context
+carries none, and `allow_missing_ca = true` says the API server is publicly
+trusted.
 
-`nn` does not create service accounts and does not touch RBAC. The service
-account and its permissions are what limit the agent, and they must already
-exist.
-
-`nn` does not generate per-endpoint proxy rules. Scoping a route by HTTP path
-looks attractive but breaks the client: kubectl starts every command with
-discovery calls such as `/api?timeout=32s` and `/openapi/v2`, and a rule list
-that misses one turns into errors that read like a broken cluster. RBAC does
-this job properly. `nn doctor` and every run mint a
-token first, so a missing account or a missing permission is reported before the
-agent starts rather than as a proxy warning afterwards.
-
-If the context carries no certificate authority, `nn` says so before launch
-rather than letting it appear later as
-`TLS handshake failed: invalid peer certificate: UnknownIssuer`. Point
-`cluster_ca` at a PEM file to supply one, or set `allow_missing_ca = true`
-when the API server uses a publicly trusted certificate.
-
-nono runs the token command with a stripped environment, where a version manager
-shim cannot work. `nn` therefore resolves `kubectl` to a real binary and refuses
-a shim with a message naming the problem. Set `kubectl` in the tool to an
-absolute path to choose one yourself, which also keeps the generated profile the
-same on every machine.
-
-Without `service_account`, `nn` falls back to a plain kubeconfig carrying the
-context's own credentials. Nothing is intercepted in that form, so the cluster
-certificate verifies directly. It puts the credential inside the sandbox, and it
-refuses to run for an exec plugin context.
+Injecting a header means intercepting TLS, so `nn` passes `--trust-proxy-ca` and
+nono keeps one reusable authority in your macOS trust store. Expect a keychain
+prompt the first time. The cluster's own certificate is still verified, by nono,
+on the leg to the API server.
 
 ### The escape hatch
 
