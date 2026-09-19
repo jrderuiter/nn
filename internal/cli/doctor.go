@@ -28,7 +28,7 @@ func newDoctorCmd() *cobra.Command {
 }
 
 func doctor(ctx context.Context) error {
-	fmt.Printf("nn %s\n\n", Version)
+	fmt.Println(versionString())
 
 	fmt.Println("tools on the host")
 	for _, b := range []string{"nono", "fnox", "kubectl", "git"} {
