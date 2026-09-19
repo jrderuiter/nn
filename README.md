@@ -239,10 +239,15 @@ else leaks a machine-specific path.
 
 ## Development
 
+Tasks live in `mise.toml`:
+
 ```
-go test ./...                      unit and golden tests
-go test ./internal/cli -update     rewrite the golden profiles
-go test -tags integration ./...    tests that need the real nono binary
+mise run build         build bin/nn
+mise run test          unit and golden tests
+mise run golden        rewrite the golden profiles
+mise run integration   tests that need the real nono binary
+mise run lint          gofmt and go vet
+mise run check         lint and test together
 ```
 
 The golden tests build a profile for each case under
