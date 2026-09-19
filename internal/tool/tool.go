@@ -146,6 +146,7 @@ func EnvKeys() []ConfigKey {
 			out = append(out, ConfigKey{
 				Path: "tools." + name + "." + key,
 				List: ft.Kind() == reflect.Slice,
+				Bool: ft.Kind() == reflect.Bool,
 			})
 		}
 	}
@@ -156,6 +157,7 @@ func EnvKeys() []ConfigKey {
 type ConfigKey struct {
 	Path string
 	List bool
+	Bool bool
 	// Enable marks the path that names the tool itself rather than a setting.
 	Enable bool
 }
