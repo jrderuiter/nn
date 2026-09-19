@@ -1,0 +1,121 @@
+package cli
+
+import (
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/spf13/cobra"
+
+	"github.com/jrderuiter/nn/internal/tool"
+)
+
+// newExampleCmd prints a complete nn.toml.
+//
+// It prints rather than writes, so it never overwrites a configuration and can
+// be piped wherever it is wanted.
+func newExampleCmd() *cobra.Command {
+	var out string
+	c := &cobra.Command{
+		Use:   "example",
+		Short: "Print a complete example nn.toml",
+		Long: "example prints a full nn.toml with every section and every setting,\n" +
+			"commented. It writes nothing, so save it where you want it:\n\n" +
+			"  nn example > nn.toml",
+		SilenceUsage: true,
+		Args:         cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			body := example()
+			if out == "" {
+				fmt.Print(body)
+				return nil
+			}
+			if _, err := os.Stat(out); err == nil {
+				return fmt.Errorf("%s already exists", out)
+			}
+			return os.WriteFile(out, []byte(body), 0o644)
+		},
+	}
+	c.Flags().StringVarP(&out, "out", "o", "", "write to this file, which must not exist")
+	return c
+}
+
+func example() string {
+	var b strings.Builder
+	p := func(format string, a ...any) { fmt.Fprintf(&b, format+"\n", a...) }
+
+	p("# nn configuration. Every value below can also come from the environment,")
+	p("# as NN_ plus the key path in upper case: NN_NONO_AGENT,")
+	p("# NN_TOOLS_KUBERNETES_CONTEXT, and so on.")
+	p("#")
+	p("# Writing a [tools.<name>] section is what turns that tool on. From the")
+	p("# environment that is NN_TOOLS_<NAME>=true, and =false turns one off.")
+	p("")
+	p("[nono]")
+	p("# The profile to extend. Left out, nn infers it from the command after --.")
+	p("agent = \"claude\"")
+	p("")
+	p("# Hand written nono profiles, merged before the generated parts.")
+	p("# extends = [\"jr/clean_env\"]")
+	p("")
+	p("# nono policy groups to include by name.")
+	p("# groups = [\"unlink_protection\"]")
+	p("")
+	p("# One of nono's built in network allowlists: minimal, developer,")
+	p("# claude-code, codex, opencode, enterprise. It widens what the sandbox can")
+	p("# reach, so nn never sets one for you.")
+	p("# network_profile = \"claude-code\"")
+	p("")
+	p("# A raw nono profile fragment, for anything with no tool of its own. It")
+	p("# applies last, so it overrides the generated parts.")
+	p("# [nono.profile.filesystem]")
+	p("# read = [\"$HOME/.config/some-tool\"]")
+	p("")
+	p("# Where secrets come from. nn never reads a secret itself: it tells nono to")
+	p("# run fnox on the host when the proxy needs one.")
+	p("# [fnox]")
+	p("# binary = \"fnox\"")
+	p("# config = \"fnox.toml\"")
+	p("# profile = \"production\"")
+	p("")
+	p("# Language runtimes and version managers. Each adds one nono group plus the")
+	p("# writable caches and variables that group leaves out. No settings.")
+	for _, name := range tool.Runtimes() {
+		p("# [tools.%s]", name)
+	}
+	p("")
+	p("[tools.git]")
+	p("# Pass the host ssh agent socket through, so the agent can push over SSH")
+	p("# without ever seeing a private key.")
+	p("ssh = false")
+	p("# The committer identity inside the sandbox.")
+	p("name = \"Your Name\"")
+	p("email = \"you@example.com\"")
+	p("# Extra git hosts to allow.")
+	p("# hosts = [\"gitlab.com\"]")
+	p("# Grant read access to the host git configuration.")
+	p("# config = true")
+	p("")
+	p("# GitHub. Needs a fnox key holding the token. git access, the rewrite of")
+	p("# ssh remotes to HTTPS, and the gh redirect are all on unless turned off.")
+	p("# [tools.github]")
+	p("# secret = \"GITHUB_TOKEN\"")
+	p("# git = false           # no clone, fetch or push over HTTPS")
+	p("# rewrite_ssh = false   # leave ssh remotes alone, which breaks fetch")
+	p("# gh_cli = false        # let gh use the host configuration")
+	p("# cache_ttl_secs = 900")
+	p("")
+	p("# One Kubernetes cluster. nono mints a token on the host for a service")
+	p("# account that already exists; nn never creates accounts or RBAC.")
+	p("# [tools.kubernetes]")
+	p("# context = \"prod\"")
+	p("# service_account = \"agent-reader\"")
+	p("# service_account_namespace = \"agent-access\"   # default: default")
+	p("# token_ttl = \"1h\"")
+	p("# kubectl = \"/opt/homebrew/bin/kubectl\"   # a real binary, not a shim")
+	p("# kubeconfig = \"~/.kube/config\"")
+	p("# cluster_ca = \"ca.pem\"                   # when the context carries none")
+	p("# allow_missing_ca = false")
+
+	return b.String()
+}

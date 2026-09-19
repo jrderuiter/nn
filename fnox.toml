@@ -1,0 +1,9 @@
+default_provider = "age-se"
+
+[providers.age-se]
+type = "age"
+recipients = ["age1se1q0q39jsxv5zje7zqtjvnz4r6y3305lqkka5t9frtfk49lz6g4vdhvqhfwsk"]
+key_file = "~/.config/fnox/age-se.txt"
+
+[secrets]
+GITHUB_TOKEN= { provider = "age-se", value = "YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IHBpdi1wMjU2IHYxT3ViUSBBa0pmWjY4bFBwKzVFV095NStybC9RWlRBNVdkRUpIbHpoZ2VwcE9JNkx5UgpIWUc3OEdRcEdZbXJIRmV2ZUJwdnE4YWFjK2JienFERUtyT3VLSXV5aEtnCi0+IChcJUp3LWdyZWFzZSAzIDAgIjFDRXFZPyBYCmZOQTA3bnJLTWNWSnJ1d0paNHV2eWQ1WjBFQVpVN3BTTHJPREdNT0VxR0dLZC8vbVBFZll3UUF5ZEpMTzNlMWcKM3V2RFl0QTJiV29oS2prbTNtZDBmQWJzTHQvdzVYMUdCd2FJWUFzNkt4U3BxNXlFYmVvCi0tLSBnVm9LRmhwN1lnQ3dVOVdwMWEvWjF5MDEvTXE0bUFjNHFSdWpsTWJtRGxnCoYKvCk739RSmLINhjyFkKSnbfkVLRgS8jTN2XPzCB6sC7KKmw==" }

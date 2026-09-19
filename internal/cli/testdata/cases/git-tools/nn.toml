@@ -1,0 +1,12 @@
+[nono]
+extends = ["jr/clean_env"]
+groups = ["unlink_protection"]
+
+[tools.mise]
+
+[tools.node]
+
+[tools.git]
+name = "Test User"
+email = "test@example.com"
+hosts = ["gitlab.com"]

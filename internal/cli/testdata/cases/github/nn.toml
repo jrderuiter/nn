@@ -1,0 +1,8 @@
+[nono]
+agent = "claude"
+
+[fnox]
+binary = "fnox"
+
+[tools.github]
+git = true
