@@ -10,9 +10,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Version is set at build time with -ldflags.
-var Version = "dev"
-
 var opts options
 
 // Execute runs the command line and returns the process exit code.
@@ -47,6 +44,7 @@ that profile refers to, and runs nono with it.
 			return runCommand(cmd, args)
 		},
 	}
+	root.SetVersionTemplate(versionString())
 
 	pf := root.PersistentFlags()
 	pf.StringVar(&opts.configPath, "config", "", "path to nn.toml, skipping the upward search")
