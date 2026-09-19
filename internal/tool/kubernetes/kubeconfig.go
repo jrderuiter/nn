@@ -171,9 +171,9 @@ func (r *resolved) caBytes() ([]byte, error) {
 // is.
 //
 // The cluster entry names no authority and skips nothing. kubectl trusts the
-// interception certificate because nono keeps a reusable authority in the macOS
-// user trust store, which Go reads. That is what --trust-proxy-ca and
-// ca_lifecycle "trusted" are for.
+// interception certificate because nono makes its authority trusted: on macOS
+// through the user trust store, which Go reads there, and elsewhere through the
+// trust bundle variables it sets, which Go reads instead.
 func proxyKubeconfig(name, server, namespace, tokenEnv string) ([]byte, error) {
 	kc := kubeconfig{
 		APIVersion:     "v1",
