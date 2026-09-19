@@ -8,6 +8,6 @@ network_profile = "claude-code"
 
 [tools.git]
 name = "Julian de Ruiter"
-email = "julian.deruiter@xebia.com"
+email = "307739+jrderuiter@users.noreply.github.com"
 
 [tools.github]
