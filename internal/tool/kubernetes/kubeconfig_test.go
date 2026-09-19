@@ -210,7 +210,7 @@ func TestTokenCommandUsesTheResolvedBinary(t *testing.T) {
 		kubectl: "/opt/homebrew/bin/kubectl",
 		ttl:     time.Hour,
 	}
-	got := p.tokenCommand()
+	got := p.tokenCommand("")
 	want := []string{"/opt/homebrew/bin/kubectl", "--context", "prod-eks",
 		"create", "token", "ro", "-n", "apps", "--duration=1h"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
@@ -245,7 +245,7 @@ func TestServiceAccountNamespaceIsUsedForTheToken(t *testing.T) {
 		kubectl: "/opt/homebrew/bin/kubectl",
 		ttl:     time.Hour,
 	}
-	got := strings.Join(p.tokenCommand(), " ")
+	got := strings.Join(p.tokenCommand(""), " ")
 	if !strings.Contains(got, "-n agent-access") {
 		t.Fatalf("the token must be minted in the account's namespace, got %s", got)
 	}
