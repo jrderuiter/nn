@@ -11,11 +11,17 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// FileName is the project configuration file.
+// FileName is the project configuration file, which a team commits.
 const FileName = "nn.toml"
 
+// LocalFileName is the machine local layer beside it, which a team does not
+// commit. A committed nn.toml holds what is true on every machine, and this
+// file holds what one person or one operating system needs instead: a real
+// kubectl path, a context under a different name.
+const LocalFileName = "nn.local.toml"
+
 // Load reads the user level configuration, then the nearest project file, then
-// applies the command line overrides.
+// the machine local layer beside it, then the environment.
 //
 // The layers are merged as plain maps before anything is decoded into the
 // configuration struct. Decoding each file in turn would not work: a capability
@@ -85,6 +91,12 @@ func configFiles(dir, explicit string) ([]string, error) {
 	}
 	if p := find(dir); p != "" {
 		out = append(out, p)
+		// The local layer belongs to the project file that was found, so it is
+		// not searched for on its own.
+		local := filepath.Join(filepath.Dir(p), LocalFileName)
+		if _, err := os.Stat(local); err == nil {
+			out = append(out, local)
+		}
 	}
 	return out, nil
 }
