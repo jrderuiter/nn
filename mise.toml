@@ -10,6 +10,8 @@ description = "Build for macOS and Linux, on amd64 and arm64"
 run = """
 set -eu
 version="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}"
+# One reading for all four binaries, so a release is stamped once.
+built="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 rm -rf dist
 mkdir -p dist
 for platform in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
@@ -19,7 +21,9 @@ for platform in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
   # CGO off so every binary is static and cross builds need no toolchain.
   CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build \
     -trimpath \
-    -ldflags "-s -w -X github.com/jrderuiter/nn/internal/cli.Version=$version" \
+    -ldflags "-s -w \
+      -X github.com/jrderuiter/nn/internal/cli.Version=$version \
+      -X github.com/jrderuiter/nn/internal/cli.BuildTime=$built" \
     -o "$out" .
   echo "$out"
 done
