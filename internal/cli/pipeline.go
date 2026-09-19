@@ -38,7 +38,7 @@ func envKeys() []config.Key {
 		{Path: "fnox.profile"},
 	}
 	for _, k := range tool.EnvKeys() {
-		keys = append(keys, config.Key{Path: k.Path, List: k.List, Enable: k.Enable})
+		keys = append(keys, config.Key{Path: k.Path, List: k.List, Bool: k.Bool, Enable: k.Enable})
 	}
 	return keys
 }
