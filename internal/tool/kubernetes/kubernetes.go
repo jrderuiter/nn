@@ -337,17 +337,10 @@ func (p *provider) buildProxy(e *tool.Env) (*tool.Result, error) {
 		},
 	}
 
-	// Injecting a header means intercepting TLS, so kubectl is served a
-	// certificate that nono signs. kubectl ignores the trust bundle variables,
-	// because Go reads the macOS system store instead, so the authority has to
-	// be a trusted one. The flag asks for that. The profile deliberately states
-	// no ca_lifecycle: an explicit "session" there contradicts the flag and
-	// nono refuses to start.
-	return &tool.Result{
-		Fragment:  f,
-		Artifacts: artifacts,
-		NonoArgs:  []string{"--trust-proxy-ca"},
-	}, nil
+	// The runner adds --trust-proxy-ca, because every credential route needs
+	// it. The profile deliberately states no ca_lifecycle: an explicit
+	// "session" there contradicts the flag and nono refuses to start.
+	return &tool.Result{Fragment: f, Artifacts: artifacts}, nil
 }
 
 // buildDirect is the fallback without a service account. It copies the host

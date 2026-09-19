@@ -130,11 +130,20 @@ section already carries.
 
 ### Secrets
 
-`nn` never reads a secret value. It emits a nono `credential_capture` entry that
-runs `fnox get <key>` on the host when the proxy needs the credential. The value
-stays out of `nn`, out of the sandbox environment, and out of any generated
-file. Inside the sandbox the agent sees a phantom token, which is a stand-in
-that the proxy exchanges for the real value.
+`nn` resolves a secret once, with `fnox get <key>`, while you are starting the
+agent, and hands it to nono in its environment. It never writes the value to a
+file and never lets it into the sandbox: the generated profile allows no such
+variable through, and the agent sees a phantom token, which is a stand-in that
+the proxy exchanges for the real value.
+
+Resolving up front is the point. A backend that asks for a touch or a password
+asks at launch, which is a moment you can judge. Fetching on demand would ask
+in the middle of a session, next to whatever the agent was doing, and teach you
+to approve a secret whenever an agent asks for one.
+
+The Kubernetes token is different: nono mints it with `kubectl create token` and
+renews it as it expires, which needs no approval and cannot be done once at
+launch.
 
 Create the key once with fnox, with any backend that fnox supports:
 

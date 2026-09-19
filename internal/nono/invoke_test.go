@@ -49,7 +49,7 @@ func TestRunArgsKeepsChildFlagsAfterTheSeparator(t *testing.T) {
 // A few profile fields resolve $WORKDIR from the environment instead of
 // expanding it, so nono itself has to see the variable.
 func TestEnvSetsWorkdir(t *testing.T) {
-	got := Env("/p", "")
+	got := Env("/p", "", nil)
 	found := 0
 	for _, kv := range got {
 		if kv == "WORKDIR=/p" {
@@ -65,7 +65,7 @@ func TestEnvSetsWorkdir(t *testing.T) {
 // inherits two and the winner depends on the platform.
 func TestEnvReplacesAnExistingWorkdir(t *testing.T) {
 	t.Setenv("WORKDIR", "/stale")
-	for _, kv := range Env("/p", "") {
+	for _, kv := range Env("/p", "", nil) {
 		if kv == "WORKDIR=/stale" {
 			t.Fatal("the stale value is still present")
 		}
@@ -99,7 +99,7 @@ func TestRunArgsCanShowBothAgain(t *testing.T) {
 // the host. It is not in allow_vars, so it stops at nono.
 func TestEnvSetsTheAgent(t *testing.T) {
 	var got string
-	for _, kv := range Env("/p", "claude") {
+	for _, kv := range Env("/p", "claude", nil) {
 		if strings.HasPrefix(kv, "HERDR_AGENT=") {
 			got = kv
 		}
@@ -111,7 +111,7 @@ func TestEnvSetsTheAgent(t *testing.T) {
 
 // An unknown command sets nothing, rather than guessing a name.
 func TestEnvOmitsTheAgentWhenUnknown(t *testing.T) {
-	for _, kv := range Env("/p", "") {
+	for _, kv := range Env("/p", "", nil) {
 		if strings.HasPrefix(kv, "HERDR_AGENT=") {
 			t.Fatalf("expected no agent, got %q", kv)
 		}
@@ -121,7 +121,7 @@ func TestEnvOmitsTheAgentWhenUnknown(t *testing.T) {
 func TestEnvReplacesAnExistingAgent(t *testing.T) {
 	t.Setenv("HERDR_AGENT", "stale")
 	count := 0
-	for _, kv := range Env("/p", "codex") {
+	for _, kv := range Env("/p", "codex", nil) {
 		if strings.HasPrefix(kv, "HERDR_AGENT=") {
 			count++
 			if kv != "HERDR_AGENT=codex" {
@@ -131,5 +131,36 @@ func TestEnvReplacesAnExistingAgent(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("expected exactly one entry, got %d", count)
+	}
+}
+
+// A resolved secret reaches nono through its environment, and nowhere else.
+func TestEnvCarriesResolvedSecrets(t *testing.T) {
+	got := Env("/p", "claude", []string{"NN_GITHUB_TOKEN=abc123"})
+	var found string
+	for _, kv := range got {
+		if strings.HasPrefix(kv, "NN_GITHUB_TOKEN=") {
+			found = kv
+		}
+	}
+	if found != "NN_GITHUB_TOKEN=abc123" {
+		t.Fatalf("got %q", found)
+	}
+}
+
+// A stale host value must not survive next to the resolved one.
+func TestEnvReplacesAStaleSecret(t *testing.T) {
+	t.Setenv("NN_GITHUB_TOKEN", "stale")
+	count := 0
+	for _, kv := range Env("/p", "", []string{"NN_GITHUB_TOKEN=fresh"}) {
+		if strings.HasPrefix(kv, "NN_GITHUB_TOKEN=") {
+			count++
+			if kv != "NN_GITHUB_TOKEN=fresh" {
+				t.Errorf("got %q", kv)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected one entry, got %d", count)
 	}
 }

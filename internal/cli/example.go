@@ -101,7 +101,6 @@ func example() string {
 	p("# git = false           # no clone, fetch or push over HTTPS")
 	p("# rewrite_ssh = false   # leave ssh remotes alone, which breaks fetch")
 	p("# gh_cli = false        # let gh use the host configuration")
-	p("# cache_ttl_secs = 900")
 	p("")
 	p("# One Kubernetes cluster. nono mints a token on the host for a service")
 	p("# account that already exists; nn never creates accounts or RBAC.")

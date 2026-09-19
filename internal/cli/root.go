@@ -109,5 +109,5 @@ func runExec(p *plan) error {
 		fmt.Println("nono " + strings.Join(quoteArgs(args), " "))
 		return nil
 	}
-	return execPlan(p)
+	return execPlan(context.Background(), p)
 }

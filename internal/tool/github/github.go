@@ -29,8 +29,6 @@ type Config struct {
 	// GHCLI redirects the gh configuration directory into the project, so the
 	// agent never touches the host gh state.
 	GHCLI *bool `toml:"gh_cli" help:"redirect the gh configuration into the project"`
-	// CacheTTLSecs is how long nono caches the captured token.
-	CacheTTLSecs int `toml:"cache_ttl_secs" help:"how long nono caches the captured token"`
 }
 
 type provider struct{ cfg Config }
@@ -46,7 +44,7 @@ func New(md toml.MetaData, prim toml.Primitive) (tool.Provider, error) {
 	// The optional booleans start nil and default to true afterwards. They
 	// cannot be pre-filled: the decoder writes through an existing pointer, so
 	// sharing one variable would let a single false value turn all of them off.
-	cfg := Config{Secret: "GITHUB_TOKEN", CacheTTLSecs: 900}
+	cfg := Config{Secret: "GITHUB_TOKEN"}
 	if err := md.PrimitiveDecode(prim, &cfg); err != nil {
 		return nil, err
 	}
@@ -69,12 +67,19 @@ func (p *provider) Preflight(ctx context.Context, e *tool.Env) error {
 }
 
 func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error) {
-	capture := e.Secrets.CaptureCommand(p.cfg.Secret)
+	// env:// rather than cmd://. nn resolves the token once, while the user is
+	// starting the agent, and hands it to nono in its environment. A cmd://
+	// capture would run fnox mid-session instead.
+	// One host variable per route. Sharing a credential_key across both would
+	// bind them to a single broker credential, and a phantom issued for the
+	// basic-auth route resolves to a user:token pair, which is not what the
+	// API route's caller expects.
+	const (
+		tokenVar = "NN_GITHUB_TOKEN"
+		gitVar   = "NN_GITHUB_GIT_AUTH"
+	)
 
 	f := &nono.Profile{
-		CredentialCapture: map[string]nono.CredentialCapture{
-			"github": {Command: capture, TimeoutSecs: 10, CacheTTLSecs: p.cfg.CacheTTLSecs},
-		},
 		Network: &nono.Network{
 			// The routes below only inject a credential. The hosts still have
 			// to be in the allowlist, or a narrow network profile blocks them
@@ -84,7 +89,7 @@ func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error)
 			CustomCredentials: map[string]nono.CustomCredential{
 				"github": {
 					Upstream:      "https://api.github.com",
-					CredentialKey: "cmd://github",
+					CredentialKey: "env://" + tokenVar,
 					EnvVar:        "GITHUB_TOKEN",
 					InjectMode:    "header",
 					InjectHeader:  "Authorization",
@@ -101,13 +106,13 @@ func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error)
 	if *p.cfg.Git {
 		// A second route is needed because git speaks to github.com, not to
 		// the API host, and it authenticates with basic auth rather than a
-		// bearer header. It shares the one capture: the token is the same, and
-		// a second capture would mean a second fnox call and a second cache.
+		// bearer header. It reads the same variable, so the token is fetched
+		// once.
 		f.Network.AllowDomain = append(f.Network.AllowDomain, nono.Domain{Domain: "github.com"})
 		f.Network.Credentials = append(f.Network.Credentials, "github_git")
 		f.Network.CustomCredentials["github_git"] = nono.CustomCredential{
 			Upstream:      "https://github.com",
-			CredentialKey: "cmd://github",
+			CredentialKey: "env://" + gitVar,
 			EnvVar:        "GITHUB_GIT_AUTH",
 			InjectMode:    "basic_auth",
 		}
@@ -125,7 +130,12 @@ func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error)
 		f.Environment.SetVars["GH_CONFIG_DIR"] = workspace.ProfileVar + "/gh"
 	}
 
-	return &tool.Result{Fragment: f}, nil
+	secrets := []tool.Secret{{EnvVar: tokenVar, Key: p.cfg.Secret}}
+	if *p.cfg.Git {
+		// The same fnox key, read once and placed under a second name.
+		secrets = append(secrets, tool.Secret{EnvVar: gitVar, Key: p.cfg.Secret})
+	}
+	return &tool.Result{Fragment: f, Secrets: secrets}, nil
 }
 
 // sshRewrite makes git use HTTPS for github.com even when a remote is written
