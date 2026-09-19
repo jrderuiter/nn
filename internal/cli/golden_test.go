@@ -131,3 +131,35 @@ func TestAllowDomainFromTheConfiguration(t *testing.T) {
 		t.Fatalf("got %+v", n.AllowDomain)
 	}
 }
+
+// A credential route means nono intercepts TLS, and a Go client reads the
+// macOS trust store rather than the variables nono sets. Without the flag such
+// a client cannot verify the connection.
+func TestTrustFlagFollowsTheCredentialRoutes(t *testing.T) {
+	write := func(t *testing.T, body string) *plan {
+		t.Helper()
+		dir := t.TempDir()
+		path := filepath.Join(dir, "nn.toml")
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		saved := opts
+		t.Cleanup(func() { opts = saved })
+		opts = options{workdir: dir, configPath: path}
+		p, err := build(context.Background(), opts, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	withRoute := strings.Join(write(t, "[tools.github]\n").runArgs(), " ")
+	if !strings.Contains(withRoute, "--trust-proxy-ca") {
+		t.Errorf("a run with a credential route needs the flag: %s", withRoute)
+	}
+
+	noRoute := strings.Join(write(t, "[tools.mise]\n").runArgs(), " ")
+	if strings.Contains(noRoute, "--trust-proxy-ca") {
+		t.Errorf("a run with no route must not ask to change the trust store: %s", noRoute)
+	}
+}

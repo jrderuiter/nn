@@ -25,7 +25,6 @@ type Env struct {
 	Workdir     string // absolute working directory
 	ArtifactDir string // absolute path of $WORKDIR/.nono/nn
 	HomeDir     string
-	ProxyPort   int // pinned proxy port, 0 when nothing needs it
 	Secrets     *secrets.Resolver
 	Lookup      func(string) (string, bool) // host environment, for preflight only
 }
@@ -35,6 +34,20 @@ type Artifact struct {
 	RelPath string // relative to Env.ArtifactDir
 	Mode    os.FileMode
 	Content []byte
+}
+
+// Secret is a value that the launcher resolves once, before the sandbox
+// starts, and puts in the environment of the nono process.
+//
+// Resolving up front matters. A secret backend that asks for a touch or a
+// password then asks while the user is starting the agent, which is a moment
+// they can judge. A lazy fetch would ask in the middle of a session, next to
+// whatever the agent was doing, and teach the user to approve on demand.
+type Secret struct {
+	// EnvVar is the name nono reads with the env:// scheme.
+	EnvVar string
+	// Key is the fnox key that holds the value.
+	Key string
 }
 
 // Result is what a provider contributes to the run.
@@ -47,14 +60,18 @@ type Result struct {
 	// directory unwritable inside the sandbox. Entries may use $HOME and the
 	// XDG variables.
 	EnsureDirs []string
+	// Secrets are resolved at launch and handed to nono in its environment.
+	// They never reach the sandbox: the profile lists no such name in
+	// allow_vars, and the proxy gives the child a phantom token instead.
+	Secrets []Secret
 }
 
 // Provider is one tool.
 type Provider interface {
 	// Name is the key under [tools] in nn.toml.
 	Name() string
-	// Preflight makes sure that the capability can work, before nn writes
-	// anything or launches nono.
+	// Preflight makes sure that the tool can work, before nn writes anything
+	// or launches nono.
 	Preflight(ctx context.Context, e *Env) error
 	// Build returns the fragment and its artifacts.
 	Build(ctx context.Context, e *Env) (*Result, error)

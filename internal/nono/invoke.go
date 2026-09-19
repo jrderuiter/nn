@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strings"
 	"syscall"
 )
@@ -109,13 +110,19 @@ func (a RunArgs) Build() []string {
 // host that read it. It is left out when the command is not a known agent, and
 // it is not in the generated allow_vars list, so it reaches nono and stops
 // there.
-func Env(workdir, agent string) []string {
+func Env(workdir, agent string, extra []string) []string {
 	vars := map[string]string{}
 	if workdir != "" {
 		vars["WORKDIR"] = workdir
 	}
 	if agent != "" {
 		vars["HERDR_AGENT"] = agent
+	}
+	for _, kv := range extra {
+		name, value, ok := strings.Cut(kv, "=")
+		if ok {
+			vars[name] = value
+		}
 	}
 	if len(vars) == 0 {
 		return os.Environ()
@@ -129,10 +136,13 @@ func Env(workdir, agent string) []string {
 		out = append(out, kv)
 	}
 	// Sorted, so the environment nn hands over does not depend on map order.
-	for _, name := range []string{"HERDR_AGENT", "WORKDIR"} {
-		if v, ok := vars[name]; ok {
-			out = append(out, name+"="+v)
-		}
+	names := make([]string, 0, len(vars))
+	for name := range vars {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		out = append(out, name+"="+vars[name])
 	}
 	return out
 }

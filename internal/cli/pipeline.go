@@ -64,6 +64,7 @@ type plan struct {
 	ws         *workspace.Workspace
 	profile    *nono.Profile
 	artifacts  []tool.Artifact
+	secrets    []tool.Secret
 	ensureDirs []string
 	extraArgs  []string
 	proxyPort  int
@@ -144,6 +145,7 @@ func build(ctx context.Context, opts options, command []string) (*plan, error) {
 	base := baseProfile(cfg)
 	m := nono.NewMerger(base)
 	var artifacts []tool.Artifact
+	var secretRefs []tool.Secret
 	var ensure []string
 	var extra []string
 	for i, r := range results {
@@ -151,6 +153,7 @@ func build(ctx context.Context, opts options, command []string) (*plan, error) {
 			return nil, err
 		}
 		artifacts = append(artifacts, r.Artifacts...)
+		secretRefs = append(secretRefs, r.Secrets...)
 		ensure = append(ensure, r.EnsureDirs...)
 		extra = append(extra, r.NonoArgs...)
 	}
@@ -163,9 +166,14 @@ func build(ctx context.Context, opts options, command []string) (*plan, error) {
 		return nil, err
 	}
 
+	if n := m.Profile().Network; n != nil && len(n.CustomCredentials) > 0 {
+		extra = append(extra, "--trust-proxy-ca")
+	}
+	extra = dedupe(extra)
+
 	return &plan{
 		cfg: cfg, ws: ws, profile: m.Profile(), artifacts: artifacts,
-		ensureDirs: ensure, extraArgs: extra, command: command,
+		secrets: secretRefs, ensureDirs: ensure, extraArgs: extra, command: command,
 	}, nil
 }
 
@@ -285,6 +293,50 @@ func (p *plan) write() error {
 	return nono.Validate(p.ws.ProfilePath())
 }
 
+// dedupe keeps the first of each flag, so two tools asking for the same one
+// do not pass it twice.
+func dedupe(in []string) []string {
+	seen := map[string]bool{}
+	out := in[:0]
+	for _, v := range in {
+		if seen[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	return out
+}
+
+// resolveSecrets fetches every declared secret once, before the sandbox
+// starts, and returns them as environment entries for the nono process.
+//
+// This is deliberately the last step before the launch. A backend that asks
+// for a touch or a password asks here, while the user is starting the agent,
+// not later in the session next to something the agent did.
+func (p *plan) resolveSecrets(ctx context.Context) ([]string, error) {
+	if len(p.secrets) == 0 {
+		return nil, nil
+	}
+	r := secrets.NewResolver(p.cfg.Fnox.Binary, p.cfg.Fnox.Config, p.cfg.Fnox.Profile)
+	// Two routes often want the same key under different names. Fetch each
+	// key once, so a backend that asks for a touch asks once.
+	byKey := map[string]string{}
+	out := make([]string, 0, len(p.secrets))
+	for _, s := range p.secrets {
+		value, ok := byKey[s.Key]
+		if !ok {
+			var err error
+			if value, err = r.Get(ctx, s.Key); err != nil {
+				return nil, err
+			}
+			byKey[s.Key] = value
+		}
+		out = append(out, s.EnvVar+"="+value)
+	}
+	return out, nil
+}
+
 // trace prints what nn built, so a failure inside nono can be reproduced by
 // hand. It goes to stderr, which keeps it out of a piped profile.
 func (p *plan) trace(args []string) {
@@ -293,6 +345,9 @@ func (p *plan) trace(args []string) {
 		fmt.Fprintf(os.Stderr, "nn: artifact  %s\n", p.ws.Path(a.RelPath))
 	}
 	fmt.Fprintf(os.Stderr, "nn: WORKDIR   %s\n", p.ws.Workdir)
+	for _, s := range p.secrets {
+		fmt.Fprintf(os.Stderr, "nn: secret    %s from fnox key %s\n", s.EnvVar, s.Key)
+	}
 	if a := agentName(p.command); a != "" {
 		fmt.Fprintf(os.Stderr, "nn: agent     %s\n", a)
 	}

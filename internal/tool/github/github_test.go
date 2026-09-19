@@ -104,16 +104,46 @@ func TestRewriteCanBeTurnedOff(t *testing.T) {
 	}
 }
 
-// Both routes carry the same token, so they share one capture. A second one
-// would mean a second fnox call and a second cache for the same secret.
-func TestBothRoutesShareOneCapture(t *testing.T) {
+// The token is resolved once, before the sandbox starts, and read from the
+// environment. A cmd:// capture would run fnox mid-session and train the user
+// to approve a secret whenever the agent asks.
+func TestTokenIsResolvedUpFront(t *testing.T) {
 	r := build(t, "")
-	if len(r.Fragment.CredentialCapture) != 1 {
-		t.Fatalf("expected one capture, got %v", r.Fragment.CredentialCapture)
+	if len(r.Fragment.CredentialCapture) != 0 {
+		t.Fatalf("no capture should remain, got %v", r.Fragment.CredentialCapture)
 	}
+	for _, s := range r.Secrets {
+		if s.Key != "GITHUB_TOKEN" {
+			t.Errorf("every secret comes from the configured key, got %+v", s)
+		}
+	}
+}
+
+// Each route needs its own credential. Sharing one binds both to a single
+// broker credential, and the basic-auth route resolves a phantom into a
+// user:token pair, which is not what the API route's caller sends.
+func TestEachRouteHasItsOwnCredential(t *testing.T) {
+	r := build(t, "")
+	seen := map[string]string{}
 	for name, route := range r.Fragment.Network.CustomCredentials {
-		if route.CredentialKey != "cmd://github" {
-			t.Errorf("route %q should use the shared capture, got %q", name, route.CredentialKey)
+		if prev, dup := seen[route.CredentialKey]; dup {
+			t.Fatalf("routes %q and %q share %q", prev, name, route.CredentialKey)
+		}
+		seen[route.CredentialKey] = name
+	}
+	if len(r.Secrets) != 2 {
+		t.Fatalf("expected one host variable per route, got %+v", r.Secrets)
+	}
+}
+
+// The name nn uses on the host must not be the one the sandbox sees, or a
+// phantom token and a real one would share a name.
+func TestHostVariableDiffersFromTheSandboxOne(t *testing.T) {
+	r := build(t, "")
+	host := r.Secrets[0].EnvVar
+	for name, route := range r.Fragment.Network.CustomCredentials {
+		if route.EnvVar == host {
+			t.Errorf("route %q hands the sandbox the same name as the host value", name)
 		}
 	}
 }

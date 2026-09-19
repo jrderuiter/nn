@@ -20,7 +20,7 @@
     "custom_credentials": {
       "github": {
         "upstream": "https://api.github.com",
-        "credential_key": "cmd://github",
+        "credential_key": "env://NN_GITHUB_TOKEN",
         "env_var": "GITHUB_TOKEN",
         "inject_mode": "header",
         "inject_header": "Authorization",
@@ -28,7 +28,7 @@
       },
       "github_git": {
         "upstream": "https://github.com",
-        "credential_key": "cmd://github",
+        "credential_key": "env://NN_GITHUB_GIT_AUTH",
         "env_var": "GITHUB_GIT_AUTH",
         "inject_mode": "basic_auth"
       }
@@ -56,17 +56,5 @@
   },
   "workdir": {
     "access": "readwrite"
-  },
-  "credential_capture": {
-    "github": {
-      "command": [
-        "fnox",
-        "--non-interactive",
-        "get",
-        "GITHUB_TOKEN"
-      ],
-      "timeout_secs": 10,
-      "cache_ttl_secs": 900
-    }
   }
 }
