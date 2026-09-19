@@ -178,6 +178,18 @@ nono then keeps one reusable authority in your macOS trust store. Expect a keych
 prompt the first time. The cluster's own certificate is still verified, by nono,
 on the leg to the API server.
 
+### Intercepted connections
+
+A credential route means nono intercepts TLS, so the client is served a
+certificate that nono signs. curl and other clients follow the trust bundle
+variables nono sets, but a Go client such as `gh` or `kubectl` reads the macOS
+trust store instead and rejects the connection. `nn` therefore passes
+`--trust-proxy-ca` whenever the profile has any route, and nono keeps one
+reusable authority in your trust store. Expect a keychain prompt the first time.
+
+The failure without it is misleading: `gh` reports `The token in GITHUB_TOKEN is
+invalid` for what is really a certificate it cannot verify.
+
 ### The escape hatch
 
 A `[nono.profile]` block holds a raw profile fragment for anything that has no
