@@ -80,7 +80,7 @@ nn example > nn.toml
 ```
 
 ```toml
-enable = ["mise", "go", "git", "github", "kubernetes"]
+enabled_tools = ["mise", "go", "git", "github", "kubernetes"]
 
 [nono]
 extends = ["nolabs-ai/claude", "jr/clean_env"]
@@ -101,16 +101,17 @@ service_account = "claude-ro"
 service_account_namespace = "apps"
 ```
 
-`enable` turns tools on, and nothing else does. A `[tools.<name>]` section only
-configures a tool. It has no effect until `enable` names that tool, so a user
-file can carry the settings for a cluster that only some projects use. A tool
-that `enable` names without a section runs on its defaults, which is how a
-runtime such as `mise` or `go` is turned on. `nn doctor` lists every section
-whose tool is not enabled.
+`enabled_tools` turns tools on, and nothing else does. A `[tools.<name>]`
+section only configures a tool. It has no effect until `enabled_tools` names
+that tool, so a user file can carry the settings for a cluster that only some
+projects use. A tool that `enabled_tools` names without a section runs on its
+defaults, which is how a runtime such as `mise` or `go` is turned on.
+`nn doctor` lists every section whose tool is not enabled.
 
-`enable` is a top level key, so it must come before the first `[section]`. A
-line under a table header belongs to that table. `nn` reports an `enable` line
-that lands in a table, because ignoring it would leave every tool off.
+`enabled_tools` is a top level key, so it must come before the first
+`[section]`. A line under a table header belongs to that table. `nn` reports an
+`enabled_tools` line that lands in a table, because ignoring it would leave
+every tool off.
 
 ### Machine differences
 
@@ -146,16 +147,16 @@ upper case, with dots as underscores.
 | `NN_TOOLS_KUBERNETES_IN_CLUSTER` | `tools.kubernetes.in_cluster` |
 | `NN_TOOLS_KUBERNETES_SERVICE_ACCOUNT_NAMESPACE` | `tools.kubernetes.service_account_namespace` |
 | `NN_TOOLS_GITHUB_SECRET` | `tools.github.secret` |
-| `NN_ENABLE` | `enable`, comma separated |
+| `NN_ENABLED_TOOLS` | `enabled_tools`, comma separated |
 
 `nn` applies the environment after both files. It matches these names against
 the keys it knows, and does not read the variable name itself.
 `NN_NONO_NETWORK_PROFILE` is otherwise ambiguous between `nono.network_profile`
 and `nono.network.profile`.
 
-`NN_ENABLE` replaces the `enable` list, as every list variable does. Give the
-whole set, for example `NN_ENABLE=git,kubernetes`. To drop one tool for one run,
-use `--no-tool` instead.
+`NN_ENABLED_TOOLS` replaces the `enabled_tools` list, as every list variable
+does. Give the whole set, for example `NN_ENABLED_TOOLS=git,kubernetes`. To drop
+one tool for one run, use `--no-tool` instead.
 
 ### Tools
 
@@ -317,7 +318,7 @@ them back, named after the nono flags they control:
 file, the `WORKDIR` value and the exact `nono` command.
 `--dry-run` prints that command instead of running it. `--tool` and `--no-tool`
 narrow the run to some of the enabled tools. They never turn on a tool that
-`enable` leaves out.
+`enabled_tools` leaves out.
 
 ## Generated files
 

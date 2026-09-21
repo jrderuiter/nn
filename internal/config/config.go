@@ -22,10 +22,10 @@ type Config struct {
 	// Root stops the upward search for a parent nn.toml.
 	Root bool `toml:"root"`
 
-	// Enable names the tools a run uses. It is the only thing that turns a
+	// EnabledTools names the tools a run uses. It is the only thing that turns a
 	// tool on. A section under [tools] only configures one, so a user file can
 	// carry the settings for a cluster that only some projects enable.
-	Enable []string `toml:"enable"`
+	EnabledTools []string `toml:"enabled_tools"`
 
 	// Tools holds one lazily decoded sub-table per tool, with its settings.
 	Tools map[string]toml.Primitive `toml:"tools"`

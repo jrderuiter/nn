@@ -1,4 +1,4 @@
-enable = ["github"]
+enabled_tools = ["github"]
 
 [nono]
 extends = ["nolabs-ai/claude"]

@@ -100,7 +100,7 @@ func TestExplicitPathSkipsTheSearch(t *testing.T) {
 }
 
 var testKeys = []Key{
-	{Path: "enable", List: true},
+	{Path: "enabled_tools", List: true},
 	{Path: "nono.extends", List: true},
 	{Path: "nono.network_profile"},
 	{Path: "tools.kubernetes.context"},
@@ -174,23 +174,23 @@ func TestEnvListValue(t *testing.T) {
 	}
 }
 
-// The enable list is a list like any other, so the environment replaces the
+// enabled_tools is a list like any other, so the environment replaces the
 // one in the file rather than adding to it. A pod spec states the whole set.
 func TestEnvReplacesTheEnableList(t *testing.T) {
 	root := t.TempDir()
-	write(t, filepath.Join(root, "nn.toml"), "enable = [\"mise\", \"git\"]\n")
-	t.Setenv("NN_ENABLE", "git, kubernetes")
+	write(t, filepath.Join(root, "nn.toml"), "enabled_tools = [\"mise\", \"git\"]\n")
+	t.Setenv("NN_ENABLED_TOOLS", "git, kubernetes")
 	cfg, err := Load(Options{Dir: root, Keys: testKeys})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(cfg.Enable, ",") != "git,kubernetes" {
-		t.Fatalf("got %v", cfg.Enable)
+	if strings.Join(cfg.EnabledTools, ",") != "git,kubernetes" {
+		t.Fatalf("got %v", cfg.EnabledTools)
 	}
 }
 
 // A section configures a tool and nothing more. It is captured for its
-// provider, but it does not put the tool in the enable list.
+// provider, but it does not put the tool in enabled_tools.
 func TestASectionDoesNotEnableATool(t *testing.T) {
 	root := t.TempDir()
 	write(t, filepath.Join(root, "nn.toml"), "[tools.github]\nsecret = \"MY_TOKEN\"\n")
@@ -201,17 +201,17 @@ func TestASectionDoesNotEnableATool(t *testing.T) {
 	if _, ok := cfg.Tools["github"]; !ok {
 		t.Fatal("the section should still be captured for its provider")
 	}
-	if len(cfg.Enable) != 0 {
-		t.Fatalf("a section must not enable its tool, got %v", cfg.Enable)
+	if len(cfg.EnabledTools) != 0 {
+		t.Fatalf("a section must not enable its tool, got %v", cfg.EnabledTools)
 	}
 }
 
-// An enable line added at the end of a file belongs to the last section.
+// An enabled_tools line added at the end of a file belongs to the last section.
 // Ignoring it there would leave every tool off without a word.
 func TestAMisplacedEnableListIsAnError(t *testing.T) {
 	for _, body := range []string{
-		"[tools.git]\nname = \"Jane\"\nenable = [\"git\"]\n",
-		"[nono]\nnetwork_profile = \"minimal\"\nenable = [\"git\"]\n",
+		"[tools.git]\nname = \"Jane\"\nenabled_tools = [\"git\"]\n",
+		"[nono]\nnetwork_profile = \"minimal\"\nenabled_tools = [\"git\"]\n",
 	} {
 		root := t.TempDir()
 		write(t, filepath.Join(root, "nn.toml"), body)

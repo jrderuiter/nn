@@ -160,12 +160,12 @@ func TestTrustFlagFollowsTheCredentialRoutes(t *testing.T) {
 	t.Cleanup(func() { trustsTheProxyCA = saved })
 
 	trustsTheProxyCA = true
-	withRoute := strings.Join(write(t, "enable = [\"github\"]\n").runArgs(), " ")
+	withRoute := strings.Join(write(t, "enabled_tools = [\"github\"]\n").runArgs(), " ")
 	if !strings.Contains(withRoute, "--trust-proxy-ca") {
 		t.Errorf("a run with a credential route needs the flag: %s", withRoute)
 	}
 
-	noRoute := strings.Join(write(t, "enable = [\"mise\"]\n").runArgs(), " ")
+	noRoute := strings.Join(write(t, "enabled_tools = [\"mise\"]\n").runArgs(), " ")
 	if strings.Contains(noRoute, "--trust-proxy-ca") {
 		t.Errorf("a run with no route must not ask to change the trust store: %s", noRoute)
 	}
@@ -173,7 +173,7 @@ func TestTrustFlagFollowsTheCredentialRoutes(t *testing.T) {
 	// Where Go reads the trust bundle variables that nono sets, the flag is
 	// not merely unnecessary. nono does not define it, and refuses to start.
 	trustsTheProxyCA = false
-	elsewhere := strings.Join(write(t, "enable = [\"github\"]\n").runArgs(), " ")
+	elsewhere := strings.Join(write(t, "enabled_tools = [\"github\"]\n").runArgs(), " ")
 	if strings.Contains(elsewhere, "--trust-proxy-ca") {
 		t.Errorf("the flag must not be passed where nono has no such argument: %s", elsewhere)
 	}
@@ -194,7 +194,7 @@ func buildFrom(t *testing.T, body string, o options) (*plan, error) {
 	return build(context.Background(), opts, nil)
 }
 
-// A section only configures a tool. Without an entry in enable, the tool adds
+// A section only configures a tool. Without an entry in enabled_tools, the tool adds
 // nothing to the profile.
 func TestASectionAloneAddsNothing(t *testing.T) {
 	p, err := buildFrom(t, "[tools.github]\nsecret = \"MY_TOKEN\"\n", options{})
@@ -209,7 +209,7 @@ func TestASectionAloneAddsNothing(t *testing.T) {
 // A tool enabled with no section runs on its defaults, which is how a runtime
 // with no settings is turned on.
 func TestAnEnabledToolNeedsNoSection(t *testing.T) {
-	p, err := buildFrom(t, "enable = [\"github\"]\n", options{})
+	p, err := buildFrom(t, "enabled_tools = [\"github\"]\n", options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,16 +219,16 @@ func TestAnEnabledToolNeedsNoSection(t *testing.T) {
 }
 
 func TestAnUnknownNameInEnableIsRejected(t *testing.T) {
-	_, err := buildFrom(t, "enable = [\"gihtub\"]\n", options{})
+	_, err := buildFrom(t, "enabled_tools = [\"gihtub\"]\n", options{})
 	if err == nil || !strings.Contains(err.Error(), "gihtub") {
-		t.Fatalf("a misspelled tool in enable must be an error naming it, got %v", err)
+		t.Fatalf("a misspelled tool in enabled_tools must be an error naming it, got %v", err)
 	}
 }
 
 // --tool narrows the enabled set. It does not turn on a tool that the
 // configuration leaves off.
 func TestToolFlagDoesNotEnable(t *testing.T) {
-	_, err := buildFrom(t, "enable = [\"git\"]\n\n[tools.github]\n", options{only: []string{"github"}})
+	_, err := buildFrom(t, "enabled_tools = [\"git\"]\n\n[tools.github]\n", options{only: []string{"github"}})
 	if err == nil || !strings.Contains(err.Error(), "not enabled") {
 		t.Fatalf("expected a not enabled error, got %v", err)
 	}
