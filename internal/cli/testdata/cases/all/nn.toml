@@ -1,4 +1,5 @@
-enabled_tools = ["mise", "git", "github", "kubernetes"]
+[nn]
+tools = ["mise", "git", "github", "kubernetes"]
 
 [nono]
 extends = ["nolabs-ai/claude"]

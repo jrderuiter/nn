@@ -1,4 +1,5 @@
-enabled_tools = ["mise", "node", "git"]
+[nn]
+tools = ["mise", "node", "git"]
 
 [nono]
 extends = ["jr/clean_env"]

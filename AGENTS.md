@@ -77,7 +77,7 @@ A tool is one thing an agent can be given. Follow the shape of
 6. Add the name to the `order` list in `internal/tool/tool.go`, so the merged
    profile stays byte stable.
 7. Add a golden case under `internal/cli/testdata/cases`, with the tool in its
-   `enabled_tools` list, then run `mise run golden`.
+   `[nn] tools` list, then run `mise run golden`.
 8. Document the tool in `README.md`.
 
 `Build` returns a fragment and its artifacts. It never invokes nono, never

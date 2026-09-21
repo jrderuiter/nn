@@ -13,6 +13,10 @@ import (
 
 // Config is the project configuration.
 type Config struct {
+	// NN holds nn's own settings, as opposed to those it passes on to nono,
+	// fnox or a tool.
+	NN NN `toml:"nn"`
+
 	// Nono holds everything that shapes the generated nono profile.
 	Nono Nono `toml:"nono"`
 
@@ -22,16 +26,19 @@ type Config struct {
 	// Root stops the upward search for a parent nn.toml.
 	Root bool `toml:"root"`
 
-	// EnabledTools names the tools a run uses. It is the only thing that turns a
-	// tool on. A section under [tools] only configures one, so a user file can
-	// carry the settings for a cluster that only some projects enable.
-	EnabledTools []string `toml:"enabled_tools"`
-
 	// Tools holds one lazily decoded sub-table per tool, with its settings.
 	Tools map[string]toml.Primitive `toml:"tools"`
 
 	md      toml.MetaData
 	sources []string
+}
+
+// NN is the [nn] section.
+type NN struct {
+	// Tools names the tools a run uses. It is the only thing that turns a tool
+	// on. A section under [tools] only configures one, so a user file can carry
+	// the settings for a cluster that only some projects enable.
+	Tools []string `toml:"tools"`
 }
 
 // Nono is the [nono] section.
