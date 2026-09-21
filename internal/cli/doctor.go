@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -61,8 +63,14 @@ func doctor(ctx context.Context) error {
 	}
 
 	fmt.Println("\ntools")
-	if len(cfg.Tools) == 0 {
-		fmt.Printf("  none configured; available: %s\n", strings.Join(tool.Known(), ", "))
+	// A section without an entry in enable is the one mistake that a changed
+	// configuration model makes likely, and it fails quietly: the tool is
+	// simply absent from the sandbox.
+	for _, name := range idle(cfg) {
+		fmt.Printf("  %-12s configured, but not in enable\n", name)
+	}
+	if len(cfg.Enable) == 0 {
+		fmt.Printf("  none enabled; available: %s\n", strings.Join(tool.Known(), ", "))
 		return nil
 	}
 
@@ -114,5 +122,17 @@ func restLines(err error) []string {
 	for _, l := range lines[1:] {
 		out = append(out, strings.TrimSpace(l))
 	}
+	return out
+}
+
+// idle lists the tools that have a section but are not enabled, sorted.
+func idle(cfg *config.Config) []string {
+	var out []string
+	for name := range cfg.Tools {
+		if !slices.Contains(cfg.Enable, name) {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
 	return out
 }

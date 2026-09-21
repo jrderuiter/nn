@@ -161,17 +161,30 @@ func userConfigPath() string {
 	return filepath.Join(home, ".config", "nn", "config.toml")
 }
 
-// rejectUnknown fails on a key that nn does not understand. Keys under
-// [capabilities] are exempt, because each provider decodes its own sub-table
-// and validates it there.
+// rejectUnknown fails on a key that nn does not understand. Keys under [tools]
+// and [nono.profile] are exempt, because each is decoded later by its own code.
+//
+// enable is the exception. A key written below a table header belongs to that
+// table, so an enable list added at the end of the file lands in the last
+// section and would otherwise be ignored without a word, leaving every tool
+// off.
 func rejectUnknown(source string, md toml.MetaData) error {
-	var bad []string
+	var bad, misplaced []string
 	for _, k := range md.Undecoded() {
 		s := k.String()
+		if len(k) > 1 && k[len(k)-1] == "enable" && !strings.HasPrefix(s, "nono.profile.") {
+			misplaced = append(misplaced, s)
+			continue
+		}
 		if strings.HasPrefix(s, "tools.") || strings.HasPrefix(s, "nono.profile.") {
 			continue
 		}
 		bad = append(bad, s)
+	}
+	if len(misplaced) > 0 {
+		sort.Strings(misplaced)
+		return fmt.Errorf("%s: %s: enable is a top level key; move it above the first [section]",
+			source, strings.Join(misplaced, ", "))
 	}
 	if len(bad) == 0 {
 		return nil

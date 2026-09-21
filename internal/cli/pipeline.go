@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -28,6 +28,7 @@ import (
 // keys, plus one per setting of every registered tool.
 func envKeys() []config.Key {
 	keys := []config.Key{
+		{Path: "enable", List: true},
 		{Path: "nono.extends", List: true},
 		{Path: "nono.groups", List: true},
 		{Path: "nono.allow_domain", List: true},
@@ -37,7 +38,7 @@ func envKeys() []config.Key {
 		{Path: "fnox.profile"},
 	}
 	for _, k := range tool.EnvKeys() {
-		keys = append(keys, config.Key{Path: k.Path, List: k.List, Bool: k.Bool, Enable: k.Enable})
+		keys = append(keys, config.Key{Path: k.Path, List: k.List, Bool: k.Bool})
 	}
 	return keys
 }
@@ -189,12 +190,15 @@ func build(ctx context.Context, opts options, command []string) (*plan, error) {
 }
 
 // selectProviders applies the --tool and --no-tool flags on top of the
-// configured set.
+// enabled set.
 func selectProviders(cfg *config.Config, opts options) ([]tool.Provider, error) {
-	for _, name := range opts.skip {
-		delete(cfg.Tools, name)
+	var enable []string
+	for _, name := range cfg.Enable {
+		if !slices.Contains(opts.skip, name) {
+			enable = append(enable, name)
+		}
 	}
-	providers, err := tool.Build(cfg.Meta(), cfg.Tools)
+	providers, err := tool.Build(cfg.Meta(), enable, cfg.Tools)
 	if err != nil {
 		return nil, err
 	}
@@ -219,21 +223,10 @@ func selectProviders(cfg *config.Config, opts options) ([]tool.Provider, error) 
 			}
 		}
 		if !found {
-			return nil, fmt.Errorf("tool %q is not configured in nn.toml; it has %v",
-				n, configuredNames(cfg))
+			return nil, fmt.Errorf("tool %q is not enabled; enable lists %v", n, cfg.Enable)
 		}
 	}
 	return out, nil
-}
-
-// configuredNames lists the tools the configuration actually declares.
-func configuredNames(cfg *config.Config) []string {
-	out := make([]string, 0, len(cfg.Tools))
-	for name := range cfg.Tools {
-		out = append(out, name)
-	}
-	sort.Strings(out)
-	return out
 }
 
 func buildProviders(ctx context.Context, providers []tool.Provider,

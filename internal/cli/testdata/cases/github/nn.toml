@@ -1,3 +1,5 @@
+enable = ["github"]
+
 [nono]
 extends = ["nolabs-ai/claude"]
 

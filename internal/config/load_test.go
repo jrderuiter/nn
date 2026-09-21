@@ -100,10 +100,7 @@ func TestExplicitPathSkipsTheSearch(t *testing.T) {
 }
 
 var testKeys = []Key{
-	{Path: "tools.mise", Enable: true},
-	{Path: "tools.go", Enable: true},
-	{Path: "tools.github", Enable: true},
-
+	{Path: "enable", List: true},
 	{Path: "nono.extends", List: true},
 	{Path: "nono.network_profile"},
 	{Path: "tools.kubernetes.context"},
@@ -177,56 +174,51 @@ func TestEnvListValue(t *testing.T) {
 	}
 }
 
-// A runtime has no settings, so the section variable is the only way to turn
-// one on from the environment.
-func TestEnvEnablesAToolWithoutSettings(t *testing.T) {
+// The enable list is a list like any other, so the environment replaces the
+// one in the file rather than adding to it. A pod spec states the whole set.
+func TestEnvReplacesTheEnableList(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("NN_TOOLS_MISE", "true")
-	t.Setenv("NN_TOOLS_GO", "1")
+	write(t, filepath.Join(root, "nn.toml"), "enable = [\"mise\", \"git\"]\n")
+	t.Setenv("NN_ENABLE", "git, kubernetes")
 	cfg, err := Load(Options{Dir: root, Keys: testKeys})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"mise", "go"} {
-		if _, ok := cfg.Tools[name]; !ok {
-			t.Errorf("NN_TOOLS_%s should have enabled %q", strings.ToUpper(name), name)
-		}
+	if strings.Join(cfg.Enable, ",") != "git,kubernetes" {
+		t.Fatalf("got %v", cfg.Enable)
 	}
 }
 
-// A false value turns a tool off, which is how a project default is dropped
-// for one run.
-func TestEnvDisablesATool(t *testing.T) {
-	root := t.TempDir()
-	write(t, filepath.Join(root, "nn.toml"), "[tools.mise]\n")
-	t.Setenv("NN_TOOLS_MISE", "false")
-	cfg, err := Load(Options{Dir: root, Keys: testKeys})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := cfg.Tools["mise"]; ok {
-		t.Fatal("a false value should have removed the tool")
-	}
-}
-
-// Turning a tool on must not wipe the settings its section already carries.
-func TestEnvEnableKeepsExistingSettings(t *testing.T) {
+// A section configures a tool and nothing more. It is captured for its
+// provider, but it does not put the tool in the enable list.
+func TestASectionDoesNotEnableATool(t *testing.T) {
 	root := t.TempDir()
 	write(t, filepath.Join(root, "nn.toml"), "[tools.github]\nsecret = \"MY_TOKEN\"\n")
-	t.Setenv("NN_TOOLS_GITHUB", "true")
 	cfg, err := Load(Options{Dir: root, Keys: testKeys})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var g struct {
-		Secret string `toml:"secret"`
+	if _, ok := cfg.Tools["github"]; !ok {
+		t.Fatal("the section should still be captured for its provider")
 	}
-	md := cfg.Meta()
-	if err := md.PrimitiveDecode(cfg.Tools["github"], &g); err != nil {
-		t.Fatal(err)
+	if len(cfg.Enable) != 0 {
+		t.Fatalf("a section must not enable its tool, got %v", cfg.Enable)
 	}
-	if g.Secret != "MY_TOKEN" {
-		t.Fatalf("the enable variable overwrote the section, got %q", g.Secret)
+}
+
+// An enable line added at the end of a file belongs to the last section.
+// Ignoring it there would leave every tool off without a word.
+func TestAMisplacedEnableListIsAnError(t *testing.T) {
+	for _, body := range []string{
+		"[tools.git]\nname = \"Jane\"\nenable = [\"git\"]\n",
+		"[nono]\nnetwork_profile = \"minimal\"\nenable = [\"git\"]\n",
+	} {
+		root := t.TempDir()
+		write(t, filepath.Join(root, "nn.toml"), body)
+		_, err := Load(Options{Dir: root, Keys: testKeys})
+		if err == nil || !strings.Contains(err.Error(), "top level") {
+			t.Errorf("expected a placement error for:\n%s\ngot: %v", body, err)
+		}
 	}
 }
 

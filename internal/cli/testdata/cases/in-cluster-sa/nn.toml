@@ -1,3 +1,5 @@
+enable = ["kubernetes"]
+
 [nono]
 extends = ["nolabs-ai/claude"]
 

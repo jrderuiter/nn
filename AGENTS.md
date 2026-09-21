@@ -76,8 +76,8 @@ A tool is one thing an agent can be given. Follow the shape of
 5. Add the blank import to the provider block in `internal/cli/pipeline.go`.
 6. Add the name to the `order` list in `internal/tool/tool.go`, so the merged
    profile stays byte stable.
-7. Add a golden case under `internal/cli/testdata/cases`, then run
-   `mise run golden`.
+7. Add a golden case under `internal/cli/testdata/cases`, with the tool in its
+   `enable` list, then run `mise run golden`.
 8. Document the tool in `README.md`.
 
 `Build` returns a fragment and its artifacts. It never invokes nono, never
