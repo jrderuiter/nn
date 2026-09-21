@@ -1,3 +1,5 @@
+enable = ["mise", "git", "github", "kubernetes"]
+
 [nono]
 extends = ["nolabs-ai/claude"]
 

@@ -1,3 +1,5 @@
+enable = ["mise", "node", "git"]
+
 [nono]
 extends = ["jr/clean_env"]
 groups = ["unlink_protection"]

@@ -7,7 +7,7 @@ tools you declare in one file.
 nn -- claude
 ```
 
-That reads `nn.toml` and turns each tool into a nono profile fragment. It merges
+That reads `nn.toml` and turns each enabled tool into a nono profile fragment. It merges
 the fragments into one profile, writes the files that profile refers to, and
 runs `nono`.
 
@@ -80,14 +80,13 @@ nn example > nn.toml
 ```
 
 ```toml
+enable = ["mise", "go", "git", "github", "kubernetes"]
+
 [nono]
 extends = ["nolabs-ai/claude", "jr/clean_env"]
 groups  = ["unlink_protection"]
 network_profile = "minimal"
 allow_domain = ["proxy.golang.org"]
-
-[tools.mise]
-[tools.go]
 
 [tools.git]
 name  = "Jane Doe"
@@ -102,8 +101,16 @@ service_account = "claude-ro"
 service_account_namespace = "apps"
 ```
 
-A `[tools.<name>]` section turns that tool on. A runtime takes no configuration,
-so its section is empty.
+`enable` turns tools on, and nothing else does. A `[tools.<name>]` section only
+configures a tool. It has no effect until `enable` names that tool, so a user
+file can carry the settings for a cluster that only some projects use. A tool
+that `enable` names without a section runs on its defaults, which is how a
+runtime such as `mise` or `go` is turned on. `nn doctor` lists every section
+whose tool is not enabled.
+
+`enable` is a top level key, so it must come before the first `[section]`. A
+line under a table header belongs to that table. `nn` reports an `enable` line
+that lands in a table, because ignoring it would leave every tool off.
 
 ### Machine differences
 
@@ -139,19 +146,16 @@ upper case, with dots as underscores.
 | `NN_TOOLS_KUBERNETES_IN_CLUSTER` | `tools.kubernetes.in_cluster` |
 | `NN_TOOLS_KUBERNETES_SERVICE_ACCOUNT_NAMESPACE` | `tools.kubernetes.service_account_namespace` |
 | `NN_TOOLS_GITHUB_SECRET` | `tools.github.secret` |
-| `NN_TOOLS_MISE` | turns the `mise` tool on, or off with a false value |
+| `NN_ENABLE` | `enable`, comma separated |
 
 `nn` applies the environment after both files. It matches these names against
 the keys it knows, and does not read the variable name itself.
 `NN_NONO_NETWORK_PROFILE` is otherwise ambiguous between `nono.network_profile`
 and `nono.network.profile`.
 
-The variable that names a tool's section turns the tool on, so
-`NN_TOOLS_MISE=true` does the same as a `[tools.mise]` section. It is the only
-way to turn on a runtime, which has no configuration of its own. A false value
-(`false`, `0`, `no`, `off` or empty) removes the tool, so you can drop a project
-default for one run. A true value never clears the configuration that the
-section already carries.
+`NN_ENABLE` replaces the `enable` list, as every list variable does. Give the
+whole set, for example `NN_ENABLE=git,kubernetes`. To drop one tool for one run,
+use `--no-tool` instead.
 
 ### Tools
 
@@ -312,7 +316,8 @@ them back, named after the nono flags they control:
 `-v` is separate. It reports what `nn` did: the profile path, every generated
 file, the `WORKDIR` value and the exact `nono` command.
 `--dry-run` prints that command instead of running it. `--tool` and `--no-tool`
-narrow the run to some of the configured tools.
+narrow the run to some of the enabled tools. They never turn on a tool that
+`enable` leaves out.
 
 ## Generated files
 

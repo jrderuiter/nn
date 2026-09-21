@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 
@@ -127,8 +128,6 @@ func EnvKeys() []ConfigKey {
 		if !ok {
 			continue
 		}
-		// The section itself, so NN_TOOLS_MISE=true turns a tool on.
-		out = append(out, ConfigKey{Path: "tools." + name, Enable: true})
 		t := reflect.TypeOf(proto)
 		for t.Kind() == reflect.Pointer {
 			t = t.Elem()
@@ -158,8 +157,6 @@ type ConfigKey struct {
 	Path string
 	List bool
 	Bool bool
-	// Enable marks the path that names the tool itself rather than a setting.
-	Enable bool
 }
 
 // Runtimes lists the tools that grant a language runtime or version manager.
@@ -192,21 +189,19 @@ func Known() []string {
 	return out
 }
 
-// buildOrder puts the configured tools in a fixed sequence: the ones
-// named in order first, then anything else by name, so output stays stable as
-// tools are added.
-func buildOrder(tables map[string]toml.Primitive) []string {
-	seen := map[string]bool{}
+// buildOrder puts the enabled tools in a fixed sequence: the ones named in
+// order first, then anything else by name, so output stays stable as tools are
+// added. The sequence in the enable list does not matter.
+func buildOrder(enabled map[string]bool) []string {
 	var out []string
 	for _, name := range order {
-		if _, ok := tables[name]; ok {
-			seen[name] = true
+		if enabled[name] {
 			out = append(out, name)
 		}
 	}
 	var rest []string
-	for name := range tables {
-		if !seen[name] {
+	for name := range enabled {
+		if !slices.Contains(order, name) {
 			rest = append(rest, name)
 		}
 	}
@@ -214,17 +209,28 @@ func buildOrder(tables map[string]toml.Primitive) []string {
 	return append(out, rest...)
 }
 
-// Build turns the raw tool tables into providers, in registry order.
-// An unknown tool name is an error, because ignoring it would start the agent
-// with less access than the configuration asked for.
-func Build(md toml.MetaData, tables map[string]toml.Primitive) ([]Provider, error) {
+// Build turns the enabled tools into providers, in registry order. Each one
+// decodes its own table, and a tool enabled with no table runs on its defaults.
+//
+// An unknown name is an error in either place. In the enable list, ignoring it
+// would start the agent with less access than the configuration asked for. As
+// a table, it is almost always a misspelling, and its settings would never
+// apply.
+func Build(md toml.MetaData, enable []string, tables map[string]toml.Primitive) ([]Provider, error) {
 	for name := range tables {
 		if _, ok := registry[name]; !ok {
-			return nil, fmt.Errorf("unknown tool %q; known tools are %v", name, Known())
+			return nil, fmt.Errorf("unknown tool [tools.%s]; known tools are %v", name, Known())
 		}
 	}
+	enabled := map[string]bool{}
+	for _, name := range enable {
+		if _, ok := registry[name]; !ok {
+			return nil, fmt.Errorf("enable: unknown tool %q; known tools are %v", name, Known())
+		}
+		enabled[name] = true
+	}
 	var out []Provider
-	for _, name := range buildOrder(tables) {
+	for _, name := range buildOrder(enabled) {
 		p, err := registry[name].factory(md, tables[name])
 		if err != nil {
 			return nil, fmt.Errorf("tool %q: %w", name, err)

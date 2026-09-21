@@ -30,20 +30,7 @@ func applyEnv(dst map[string]any, keys []Key) {
 		if !ok {
 			continue
 		}
-		path := strings.Split(k.Path, ".")
-		if !k.Enable {
-			setPath(dst, path, k.parse(raw))
-			continue
-		}
-		if truthy(raw) {
-			// Only create the section. A section that the file already wrote
-			// keeps its settings.
-			if _, exists := lookup(dst, path); !exists {
-				setPath(dst, path, map[string]any{})
-			}
-			continue
-		}
-		remove(dst, path)
+		setPath(dst, strings.Split(k.Path, "."), k.parse(raw))
 	}
 }
 
@@ -53,31 +40,6 @@ func truthy(raw string) bool {
 		return false
 	}
 	return true
-}
-
-func lookup(dst map[string]any, keys []string) (any, bool) {
-	cur := dst
-	for _, k := range keys[:len(keys)-1] {
-		next, ok := cur[k].(map[string]any)
-		if !ok {
-			return nil, false
-		}
-		cur = next
-	}
-	v, ok := cur[keys[len(keys)-1]]
-	return v, ok
-}
-
-func remove(dst map[string]any, keys []string) {
-	cur := dst
-	for _, k := range keys[:len(keys)-1] {
-		next, ok := cur[k].(map[string]any)
-		if !ok {
-			return
-		}
-		cur = next
-	}
-	delete(cur, keys[len(keys)-1])
 }
 
 // Key is one configuration value that the environment can set.
@@ -91,10 +53,6 @@ type Key struct {
 	// is decoded into the typed structs, so a string here would fail that
 	// decode rather than turn the setting on.
 	Bool bool
-	// Enable says the path names a whole tool rather than a setting. A true
-	// value writes the section, a false value removes it. A runtime has no
-	// settings, so this is the only way the environment can turn one on.
-	Enable bool
 }
 
 func (k Key) parse(raw string) any {

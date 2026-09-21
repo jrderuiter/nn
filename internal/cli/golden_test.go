@@ -160,12 +160,12 @@ func TestTrustFlagFollowsTheCredentialRoutes(t *testing.T) {
 	t.Cleanup(func() { trustsTheProxyCA = saved })
 
 	trustsTheProxyCA = true
-	withRoute := strings.Join(write(t, "[tools.github]\n").runArgs(), " ")
+	withRoute := strings.Join(write(t, "enable = [\"github\"]\n").runArgs(), " ")
 	if !strings.Contains(withRoute, "--trust-proxy-ca") {
 		t.Errorf("a run with a credential route needs the flag: %s", withRoute)
 	}
 
-	noRoute := strings.Join(write(t, "[tools.mise]\n").runArgs(), " ")
+	noRoute := strings.Join(write(t, "enable = [\"mise\"]\n").runArgs(), " ")
 	if strings.Contains(noRoute, "--trust-proxy-ca") {
 		t.Errorf("a run with no route must not ask to change the trust store: %s", noRoute)
 	}
@@ -173,8 +173,63 @@ func TestTrustFlagFollowsTheCredentialRoutes(t *testing.T) {
 	// Where Go reads the trust bundle variables that nono sets, the flag is
 	// not merely unnecessary. nono does not define it, and refuses to start.
 	trustsTheProxyCA = false
-	elsewhere := strings.Join(write(t, "[tools.github]\n").runArgs(), " ")
+	elsewhere := strings.Join(write(t, "enable = [\"github\"]\n").runArgs(), " ")
 	if strings.Contains(elsewhere, "--trust-proxy-ca") {
 		t.Errorf("the flag must not be passed where nono has no such argument: %s", elsewhere)
+	}
+}
+
+// buildFrom runs the pipeline on one configuration body.
+func buildFrom(t *testing.T, body string, o options) (*plan, error) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nn.toml")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	saved := opts
+	t.Cleanup(func() { opts = saved })
+	o.workdir, o.configPath = dir, path
+	opts = o
+	return build(context.Background(), opts, nil)
+}
+
+// A section only configures a tool. Without an entry in enable, the tool adds
+// nothing to the profile.
+func TestASectionAloneAddsNothing(t *testing.T) {
+	p, err := buildFrom(t, "[tools.github]\nsecret = \"MY_TOKEN\"\n", options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.profile.Network != nil || len(p.secrets) != 0 {
+		t.Fatalf("a tool that is not enabled must add nothing: %+v", p.profile.Network)
+	}
+}
+
+// A tool enabled with no section runs on its defaults, which is how a runtime
+// with no settings is turned on.
+func TestAnEnabledToolNeedsNoSection(t *testing.T) {
+	p, err := buildFrom(t, "enable = [\"github\"]\n", options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.secrets) == 0 || p.secrets[0].Key != "GITHUB_TOKEN" {
+		t.Fatalf("expected the github defaults, got %+v", p.secrets)
+	}
+}
+
+func TestAnUnknownNameInEnableIsRejected(t *testing.T) {
+	_, err := buildFrom(t, "enable = [\"gihtub\"]\n", options{})
+	if err == nil || !strings.Contains(err.Error(), "gihtub") {
+		t.Fatalf("a misspelled tool in enable must be an error naming it, got %v", err)
+	}
+}
+
+// --tool narrows the enabled set. It does not turn on a tool that the
+// configuration leaves off.
+func TestToolFlagDoesNotEnable(t *testing.T) {
+	_, err := buildFrom(t, "enable = [\"git\"]\n\n[tools.github]\n", options{only: []string{"github"}})
+	if err == nil || !strings.Contains(err.Error(), "not enabled") {
+		t.Fatalf("expected a not enabled error, got %v", err)
 	}
 }
