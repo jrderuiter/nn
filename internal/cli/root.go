@@ -87,6 +87,9 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	if len(command) == 0 {
 		return errNoCommand
 	}
+	if err := ensureConfig(opts); err != nil {
+		return err
+	}
 	p, err := build(context.Background(), opts, command)
 	if err != nil {
 		return err
