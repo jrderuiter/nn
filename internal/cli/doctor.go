@@ -63,13 +63,13 @@ func doctor(ctx context.Context) error {
 	}
 
 	fmt.Println("\ntools")
-	// A section without an entry in nn.tools is the one mistake that a changed
+	// A section without an entry in tools.enabled is the one mistake that a changed
 	// configuration model makes likely, and it fails quietly: the tool is
 	// simply absent from the sandbox.
 	for _, name := range idle(cfg) {
-		fmt.Printf("  %-12s configured, but not in nn.tools\n", name)
+		fmt.Printf("  %-12s configured, but not in tools.enabled\n", name)
 	}
-	if len(cfg.NN.Tools) == 0 {
+	if len(cfg.Enabled) == 0 {
 		fmt.Printf("  none enabled; available: %s\n", strings.Join(tool.Known(), ", "))
 		return nil
 	}
@@ -129,7 +129,7 @@ func restLines(err error) []string {
 func idle(cfg *config.Config) []string {
 	var out []string
 	for name := range cfg.Tools {
-		if !slices.Contains(cfg.NN.Tools, name) {
+		if !slices.Contains(cfg.Enabled, name) {
 			out = append(out, name)
 		}
 	}

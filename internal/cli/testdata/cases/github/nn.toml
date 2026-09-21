@@ -1,11 +1,11 @@
-[nn]
-tools = ["github"]
-
 [nono]
 extends = ["nolabs-ai/claude"]
 
 [fnox]
 binary = "fnox"
+
+[tools]
+enabled = ["github"]
 
 [tools.github]
 git = true

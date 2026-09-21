@@ -28,7 +28,7 @@ import (
 // keys, plus one per setting of every registered tool.
 func envKeys() []config.Key {
 	keys := []config.Key{
-		{Path: "nn.tools", List: true},
+		{Path: "tools.enabled", List: true},
 		{Path: "nono.extends", List: true},
 		{Path: "nono.groups", List: true},
 		{Path: "nono.allow_domain", List: true},
@@ -193,7 +193,7 @@ func build(ctx context.Context, opts options, command []string) (*plan, error) {
 // enabled set.
 func selectProviders(cfg *config.Config, opts options) ([]tool.Provider, error) {
 	var enable []string
-	for _, name := range cfg.NN.Tools {
+	for _, name := range cfg.Enabled {
 		if !slices.Contains(opts.skip, name) {
 			enable = append(enable, name)
 		}
@@ -223,7 +223,7 @@ func selectProviders(cfg *config.Config, opts options) ([]tool.Provider, error) 
 			}
 		}
 		if !found {
-			return nil, fmt.Errorf("tool %q is not enabled; nn.tools lists %v", n, cfg.NN.Tools)
+			return nil, fmt.Errorf("tool %q is not enabled; tools.enabled lists %v", n, cfg.Enabled)
 		}
 	}
 	return out, nil

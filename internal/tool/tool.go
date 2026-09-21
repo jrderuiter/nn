@@ -17,6 +17,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"github.com/jrderuiter/nn/internal/config"
 	"github.com/jrderuiter/nn/internal/nono"
 	"github.com/jrderuiter/nn/internal/secrets"
 )
@@ -106,6 +107,9 @@ func Register(name string, f Factory, proto func() any) {
 	if _, dup := registry[name]; dup {
 		panic("tool registered twice: " + name)
 	}
+	if name == config.EnabledKey {
+		panic("tool name is reserved for the list under [tools]: " + name)
+	}
 	registry[name] = entry{factory: f, proto: proto}
 }
 
@@ -191,7 +195,7 @@ func Known() []string {
 
 // buildOrder puts the enabled tools in a fixed sequence: the ones named in
 // order first, then anything else by name, so output stays stable as tools are
-// added. The sequence in nn.tools does not matter.
+// added. The sequence in tools.enabled does not matter.
 func buildOrder(enabled map[string]bool) []string {
 	var out []string
 	for _, name := range order {
@@ -212,7 +216,7 @@ func buildOrder(enabled map[string]bool) []string {
 // Build turns the enabled tools into providers, in registry order. Each one
 // decodes its own table, and a tool enabled with no table runs on its defaults.
 //
-// An unknown name is an error in either place. In nn.tools, ignoring it
+// An unknown name is an error in either place. In tools.enabled, ignoring it
 // would start the agent with less access than the configuration asked for. As
 // a table, it is almost always a misspelling, and its settings would never
 // apply.
@@ -225,7 +229,7 @@ func Build(md toml.MetaData, enable []string, tables map[string]toml.Primitive) 
 	enabled := map[string]bool{}
 	for _, name := range enable {
 		if _, ok := registry[name]; !ok {
-			return nil, fmt.Errorf("nn.tools: unknown tool %q; known tools are %v", name, Known())
+			return nil, fmt.Errorf("tools.enabled: unknown tool %q; known tools are %v", name, Known())
 		}
 		enabled[name] = true
 	}

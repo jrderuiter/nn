@@ -14,6 +14,10 @@ import (
 // FileName is the project configuration file, which a team commits.
 const FileName = "nn.toml"
 
+// EnabledKey is the key under [tools] that lists the tools a run uses. It is a
+// name no tool can take.
+const EnabledKey = "enabled"
+
 // LocalFileName is the machine local layer beside it, which a team does not
 // commit. A committed nn.toml holds what is true on every machine, and this
 // file holds what one person or one operating system needs instead: a real
@@ -70,6 +74,16 @@ func Load(o Options) (*Config, error) {
 	}
 	if err := rejectUnknown(describe(files), md); err != nil {
 		return nil, err
+	}
+	// The list shares [tools] with the tool tables, which keeps it beside the
+	// settings it turns on. Taking it out here leaves Tools holding tables
+	// only, so no caller mistakes it for a tool.
+	if prim, ok := cfg.Tools[EnabledKey]; ok {
+		if err := md.PrimitiveDecode(prim, &cfg.Enabled); err != nil {
+			return nil, fmt.Errorf("%s: tools.%s must be a list of tool names: %w",
+				describe(files), EnabledKey, err)
+		}
+		delete(cfg.Tools, EnabledKey)
 	}
 	cfg.md = md
 	cfg.sources = files
