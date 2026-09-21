@@ -1,9 +1,9 @@
-[nn]
-tools = ["mise", "node", "git"]
-
 [nono]
 extends = ["jr/clean_env"]
 groups = ["unlink_protection"]
+
+[tools]
+enabled = ["mise", "node", "git"]
 
 [tools.mise]
 

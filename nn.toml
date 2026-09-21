@@ -1,9 +1,9 @@
-[nn]
-tools = ["mise", "go", "git", "github"]
-
 [nono]
 extends = ["nolabs-ai/claude"]
 network_profile = "claude-code"
+
+[tools]
+enabled = ["mise", "go", "git", "github"]
 
 [tools.git]
 name = "Julian de Ruiter"

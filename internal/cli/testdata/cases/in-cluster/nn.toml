@@ -1,8 +1,8 @@
-[nn]
-tools = ["kubernetes"]
-
 [nono]
 extends = ["nolabs-ai/claude"]
+
+[tools]
+enabled = ["kubernetes"]
 
 [tools.kubernetes]
 in_cluster = true
