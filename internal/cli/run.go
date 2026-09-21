@@ -24,18 +24,7 @@ func newRunCmd() *cobra.Command {
 		DisableFlagsInUseLine: true,
 		Args:                  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			command := commandFor(cmd, args)
-			if len(command) == 0 {
-				return errNoCommand
-			}
-			p, err := build(context.Background(), opts, command)
-			if err != nil {
-				return err
-			}
-			if err := p.write(); err != nil {
-				return err
-			}
-			return runExec(p)
+			return runCommand(cmd, args)
 		},
 	}
 	return c

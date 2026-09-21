@@ -34,14 +34,23 @@ go install github.com/jrderuiter/nn@latest
 ## Getting started
 
 ```
-nn example > nn.toml
+nn init
 nn doctor
 nn -- claude
 ```
 
+`nn init` writes a minimal `nn.toml` when the directory has none, and then
+generates the sandbox files from it. `nn -- claude` writes the same file on a
+first run, so a project needs no setup step of its own. An `nn.toml` that
+already exists is used as it is, and is never rewritten.
+
+Edit the file. Make sure that it works with `nn doctor`. Then run the agent.
 `nn example` prints a complete configuration with every key, the optional ones
-commented. Edit the file. Make sure that it works with `nn doctor`. Then run the
-agent.
+commented:
+
+```
+nn example > nn.toml
+```
 
 ## Configuration
 
@@ -54,13 +63,16 @@ nothing, so the profile stays the same whatever you run.
 
 Without a `network_profile`, nono leaves egress unrestricted, so naming one
 narrows the sandbox. `minimal` grants the LLM APIs and nothing else, and it is
-what `nn example` writes. Each tool allows the hosts it needs on top of that,
+what `nn init` and `nn example` write. Each tool allows the hosts it needs on top of that,
 and `allow_domain` adds any others the project needs.
 
 `nn` reads `~/.config/nn/config.toml` first, then the nearest `nn.toml` found by
 walking up from the working directory, then the environment. Layers merge per
 key, so a project file adds to a tool that the user file declares. It does not
-replace the tool. `nn example` prints a complete file to start from:
+replace the tool. When that upward search finds no `nn.toml`, `nn init` and a
+run write a minimal one in the working directory. A subdirectory of a project
+that already has one gets nothing, because a second file there would hide the
+file above it. `nn example` prints a complete file to start from:
 
 ```
 nn example > nn.toml
@@ -219,7 +231,8 @@ block is the one exception, because it is your own last word.
 | `nn example` | Print a complete example `nn.toml` |
 
 `nn init` writes exactly what a run writes, so you can read the profile, keep
-it, or give it to nono yourself. `nn doctor` writes nothing. It loads the
+it, or give it to nono yourself. Both write a minimal `nn.toml` when the project
+has none. `nn doctor` writes nothing, so it never creates that file. It loads the
 configuration, tests every tool, and makes sure that the profile they produce
 is valid.
 
