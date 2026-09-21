@@ -100,7 +100,7 @@ func TestExplicitPathSkipsTheSearch(t *testing.T) {
 }
 
 var testKeys = []Key{
-	{Path: "enabled_tools", List: true},
+	{Path: "nn.tools", List: true},
 	{Path: "nono.extends", List: true},
 	{Path: "nono.network_profile"},
 	{Path: "tools.kubernetes.context"},
@@ -174,23 +174,23 @@ func TestEnvListValue(t *testing.T) {
 	}
 }
 
-// enabled_tools is a list like any other, so the environment replaces the
+// nn.tools is a list like any other, so the environment replaces the
 // one in the file rather than adding to it. A pod spec states the whole set.
 func TestEnvReplacesTheEnableList(t *testing.T) {
 	root := t.TempDir()
-	write(t, filepath.Join(root, "nn.toml"), "enabled_tools = [\"mise\", \"git\"]\n")
-	t.Setenv("NN_ENABLED_TOOLS", "git, kubernetes")
+	write(t, filepath.Join(root, "nn.toml"), "[nn]\ntools = [\"mise\", \"git\"]\n")
+	t.Setenv("NN_NN_TOOLS", "git, kubernetes")
 	cfg, err := Load(Options{Dir: root, Keys: testKeys})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(cfg.EnabledTools, ",") != "git,kubernetes" {
-		t.Fatalf("got %v", cfg.EnabledTools)
+	if strings.Join(cfg.NN.Tools, ",") != "git,kubernetes" {
+		t.Fatalf("got %v", cfg.NN.Tools)
 	}
 }
 
 // A section configures a tool and nothing more. It is captured for its
-// provider, but it does not put the tool in enabled_tools.
+// provider, but it does not put the tool in nn.tools.
 func TestASectionDoesNotEnableATool(t *testing.T) {
 	root := t.TempDir()
 	write(t, filepath.Join(root, "nn.toml"), "[tools.github]\nsecret = \"MY_TOKEN\"\n")
@@ -201,24 +201,19 @@ func TestASectionDoesNotEnableATool(t *testing.T) {
 	if _, ok := cfg.Tools["github"]; !ok {
 		t.Fatal("the section should still be captured for its provider")
 	}
-	if len(cfg.EnabledTools) != 0 {
-		t.Fatalf("a section must not enable its tool, got %v", cfg.EnabledTools)
+	if len(cfg.NN.Tools) != 0 {
+		t.Fatalf("a section must not enable its tool, got %v", cfg.NN.Tools)
 	}
 }
 
-// An enabled_tools line added at the end of a file belongs to the last section.
-// Ignoring it there would leave every tool off without a word.
-func TestAMisplacedEnableListIsAnError(t *testing.T) {
-	for _, body := range []string{
-		"[tools.git]\nname = \"Jane\"\nenabled_tools = [\"git\"]\n",
-		"[nono]\nnetwork_profile = \"minimal\"\nenabled_tools = [\"git\"]\n",
-	} {
-		root := t.TempDir()
-		write(t, filepath.Join(root, "nn.toml"), body)
-		_, err := Load(Options{Dir: root, Keys: testKeys})
-		if err == nil || !strings.Contains(err.Error(), "top level") {
-			t.Errorf("expected a placement error for:\n%s\ngot: %v", body, err)
-		}
+// A misspelled key in [nn] would leave every tool off without a word, so it
+// is reported like any other unknown key.
+func TestAnUnknownKeyInTheNNSectionIsAnError(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, "nn.toml"), "[nn]\ntool = [\"git\"]\n")
+	_, err := Load(Options{Dir: root, Keys: testKeys})
+	if err == nil || !strings.Contains(err.Error(), "nn.tool") {
+		t.Fatalf("expected an unknown key error naming nn.tool, got %v", err)
 	}
 }
 

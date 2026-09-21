@@ -163,28 +163,14 @@ func userConfigPath() string {
 
 // rejectUnknown fails on a key that nn does not understand. Keys under [tools]
 // and [nono.profile] are exempt, because each is decoded later by its own code.
-//
-// enabled_tools is the exception. A key written below a table header belongs to that
-// table, so an enabled_tools line added at the end of the file lands in the last
-// section and would otherwise be ignored without a word, leaving every tool
-// off.
 func rejectUnknown(source string, md toml.MetaData) error {
-	var bad, misplaced []string
+	var bad []string
 	for _, k := range md.Undecoded() {
 		s := k.String()
-		if len(k) > 1 && k[len(k)-1] == "enabled_tools" && !strings.HasPrefix(s, "nono.profile.") {
-			misplaced = append(misplaced, s)
-			continue
-		}
 		if strings.HasPrefix(s, "tools.") || strings.HasPrefix(s, "nono.profile.") {
 			continue
 		}
 		bad = append(bad, s)
-	}
-	if len(misplaced) > 0 {
-		sort.Strings(misplaced)
-		return fmt.Errorf("%s: %s: enabled_tools is a top level key; move it above the first [section]",
-			source, strings.Join(misplaced, ", "))
 	}
 	if len(bad) == 0 {
 		return nil
