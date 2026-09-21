@@ -89,7 +89,7 @@ func configFiles(dir, explicit string) ([]string, error) {
 			out = append(out, u)
 		}
 	}
-	if p := find(dir); p != "" {
+	if p := Find(dir); p != "" {
 		out = append(out, p)
 		// The local layer belongs to the project file that was found, so it is
 		// not searched for on its own.
@@ -126,9 +126,10 @@ func mergeMaps(dst, src map[string]any) {
 	}
 }
 
-// find walks up from dir looking for nn.toml. It stops at a directory holding
-// a .git entry, so a nested repository never picks up its parent's settings.
-func find(dir string) string {
+// Find walks up from dir looking for nn.toml and returns its path, or an empty
+// string when there is none. It stops at a directory holding a .git entry, so a
+// nested repository never picks up its parent's settings.
+func Find(dir string) string {
 	cur, err := filepath.Abs(dir)
 	if err != nil {
 		return ""
