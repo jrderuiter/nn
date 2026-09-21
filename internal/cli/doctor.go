@@ -63,11 +63,12 @@ func doctor(ctx context.Context) error {
 	}
 
 	fmt.Println("\ntools")
-	// A section without an entry in tools.enabled is the one mistake that a changed
-	// configuration model makes likely, and it fails quietly: the tool is
-	// simply absent from the sandbox.
+	// A section without an entry in tools.enabled is the one mistake that a
+	// changed configuration model makes likely, and it fails quietly: the tool
+	// is simply absent from the sandbox. It is a warning, not a failure,
+	// because a user file may configure a tool that only some projects enable.
 	for _, name := range idle(cfg) {
-		fmt.Printf("  %-12s configured, but not in tools.enabled\n", name)
+		fmt.Printf("  %-12s warning: configured but not enabled; add it to tools.enabled to use it\n", name)
 	}
 	if len(cfg.Enabled) == 0 {
 		fmt.Printf("  none enabled; available: %s\n", strings.Join(tool.Known(), ", "))
