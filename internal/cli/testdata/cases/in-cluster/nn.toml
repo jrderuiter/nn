@@ -1,4 +1,4 @@
-enable = ["kubernetes"]
+enabled_tools = ["kubernetes"]
 
 [nono]
 extends = ["nolabs-ai/claude"]

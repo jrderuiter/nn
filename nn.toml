@@ -1,4 +1,4 @@
-enable = ["mise", "go", "git", "github"]
+enabled_tools = ["mise", "go", "git", "github"]
 
 [nono]
 extends = ["nolabs-ai/claude"]

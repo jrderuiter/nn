@@ -1,4 +1,4 @@
-enable = ["mise", "node", "git"]
+enabled_tools = ["mise", "node", "git"]
 
 [nono]
 extends = ["jr/clean_env"]
