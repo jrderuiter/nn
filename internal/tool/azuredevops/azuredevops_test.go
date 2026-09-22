@@ -144,3 +144,12 @@ func TestRewriteCanBeTurnedOff(t *testing.T) {
 		t.Fatalf("rewrite_ssh = false should write no git configuration, got %+v", r.GitConfig)
 	}
 }
+
+// nono base64-encodes a basic_auth value as it is, so the stored value must
+// already be a user:password pair. A bare token reaches Azure DevOps as a
+// malformed pair, and every request fails with 401.
+func TestTokenIsStoredAsABasicAuthPair(t *testing.T) {
+	if f := build(t, `organization = "acme"`).Secrets[0].Format; f != ":{}" {
+		t.Fatalf("got format %q", f)
+	}
+}
