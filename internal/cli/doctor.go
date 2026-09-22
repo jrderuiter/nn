@@ -47,15 +47,15 @@ func doctor(ctx context.Context) error {
 			return err
 		}
 	}
+	if err := requireConfig(opts); err != nil {
+		return err
+	}
 	cfg, err := config.Load(config.Options{Dir: wd, Explicit: opts.configPath, Keys: envKeys()})
 	if err != nil {
 		return err
 	}
 
 	fmt.Println("\nconfiguration")
-	if len(cfg.Sources()) == 0 {
-		fmt.Println("  none found; nn will run with defaults only")
-	}
 	for _, s := range cfg.Sources() {
 		fmt.Printf("  %s\n", s)
 	}
