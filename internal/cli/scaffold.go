@@ -1,17 +1,45 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/jrderuiter/nn/internal/config"
 )
 
-// ensureConfig writes a minimal nn.toml when the project has none, so that a
-// first run in a new project starts from a file the user can edit rather than
-// from defaults that are nowhere written down.
+// errNoConfig stops a run in a project that has no nn.toml. Running with
+// defaults only would leave egress unrestricted, and nothing on disk would say
+// what the sandbox was.
+var errNoConfig = errors.New("no " + config.FileName + " found; run `nn init` to create one")
+
+// projectDir is the directory that the upward search for nn.toml starts from.
+func projectDir(o options) (string, error) {
+	if o.workdir != "" {
+		return o.workdir, nil
+	}
+	return os.Getwd()
+}
+
+// requireConfig fails when the upward search finds no nn.toml. An explicit
+// --config is left to the loader, which reports a missing file by its path.
+func requireConfig(o options) error {
+	if o.configPath != "" {
+		return nil
+	}
+	dir, err := projectDir(o)
+	if err != nil {
+		return err
+	}
+	if config.Find(dir) == "" {
+		return errNoConfig
+	}
+	return nil
+}
+
+// ensureConfig writes an empty nn.toml when the project has none, so that init
+// is the one step that marks a directory as an nn project.
 //
 // It looks for the project file the same way the loader does, by walking up,
 // and writes nothing when that search finds one. Writing a second file in a
@@ -22,52 +50,17 @@ func ensureConfig(o options) error {
 	if o.configPath != "" {
 		return nil
 	}
-	dir := o.workdir
-	if dir == "" {
-		var err error
-		if dir, err = os.Getwd(); err != nil {
-			return err
-		}
+	dir, err := projectDir(o)
+	if err != nil {
+		return err
 	}
 	if config.Find(dir) != "" {
 		return nil
 	}
 	path := filepath.Join(dir, config.FileName)
-	if err := os.WriteFile(path, []byte(minimalConfig()), 0o644); err != nil {
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
-	fmt.Fprintf(os.Stderr, "nn: wrote %s; edit it, or run `nn example` for every setting\n", path)
+	fmt.Fprintf(os.Stderr, "nn: wrote an empty %s; run `nn example` for every setting\n", path)
 	return nil
-}
-
-// minimalConfig is the file a new project starts from. It is short on purpose:
-// `nn example` is the complete one, and a first file that has to be read before
-// it can be changed is a file nobody changes.
-func minimalConfig() string {
-	var b strings.Builder
-	p := func(format string, a ...any) { fmt.Fprintf(&b, format+"\n", a...) }
-
-	p("# nn configuration. Run `nn example` for a file with every section and")
-	p("# every setting, commented.")
-	p("")
-	p("[nono]")
-	p("# nono profiles to extend, merged before the generated parts. An agent")
-	p("# pack such as nolabs-ai/claude goes here.")
-	p("extends = [\"default\"]")
-	p("")
-	p("# One of nono's built in network allowlists: minimal, developer,")
-	p("# claude-code, codex, opencode, enterprise. minimal grants the LLM APIs")
-	p("# and nothing else. An empty value leaves egress unrestricted.")
-	p("network_profile = \"minimal\"")
-	p("")
-	p("# Writing a [tools.<name>] section is what turns that tool on. These are")
-	p("# the common ones. Run `nn example` for the rest, and for their settings.")
-	p("# [tools.git]")
-	p("# name = \"Your Name\"")
-	p("# email = \"you@example.com\"")
-	p("")
-	p("# [tools.github]")
-	p("# secret = \"GITHUB_TOKEN\"")
-
-	return b.String()
 }
