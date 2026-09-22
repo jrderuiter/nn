@@ -113,7 +113,7 @@ var registry = map[string]entry{}
 // after these, in name order.
 var order = []string{
 	"mise", "go", "node", "bun", "python", "rust", "java", "nix",
-	"git", "github", "kubernetes",
+	"git", "github", "azure_devops", "kubernetes",
 }
 
 // Register adds a tool. proto returns a pointer to the tool's own

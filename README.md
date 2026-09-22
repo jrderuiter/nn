@@ -126,6 +126,7 @@ section already carries.
 | `mise`, `go`, `node`, `bun`, `python`, `rust`, `java`, `nix` | One nono group each, plus the writable caches and environment variables that group omits |
 | `git` | A committer identity, the git configuration group, extra hosts |
 | `github` | The GitHub API, plus clone, fetch and push over HTTPS |
+| `azure_devops` | The Azure DevOps API, plus clone, fetch and push over HTTPS, for one organization |
 | `kubernetes` | One cluster, through nono's credential proxy |
 
 ### Secrets
@@ -151,6 +152,31 @@ Create the key once with fnox, with any backend that fnox supports:
 fnox provider add op 1password --vault Engineering
 fnox set GITHUB_TOKEN --provider op
 ```
+
+### Azure DevOps
+
+The `azure_devops` tool gives the agent one organization on `dev.azure.com`.
+Git and the REST API use the same host, and both take a personal access token
+(PAT) as a basic auth password. So one proxy route covers git, the API and the
+`az devops` extension. Inside the sandbox, `AZURE_DEVOPS_EXT_PAT` holds a
+phantom token, and `AZURE_CONFIG_DIR` points into the artifact directory.
+
+```toml
+[tools.azure_devops]
+organization = "my-org"
+secret = "AZURE_DEVOPS_PAT"
+```
+
+The proxy can only add a credential to an HTTPS request, so `nn` rewrites ssh
+remotes to HTTPS. An ssh remote has the form
+`git@ssh.dev.azure.com:v3/{org}/{project}/{repo}`, but the HTTPS form puts
+`_git` between the project and the repository. Git can only replace a fixed
+start of a URL, so `nn` writes one rewrite per project. It takes the projects
+from the remotes of the current repository. If the agent must clone a project
+that is not a remote, add it to `projects`. `nn` only rewrites the projects of
+the configured organization, because the token belongs to that organization.
+
+The tool does not cover the older `{org}.visualstudio.com` host.
 
 ### Kubernetes
 

@@ -1,0 +1,6 @@
+[nono]
+extends = ["nolabs-ai/claude"]
+
+[tools.azure_devops]
+organization = "acme"
+projects = ["Data Science"]
