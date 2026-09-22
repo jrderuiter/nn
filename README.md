@@ -166,11 +166,21 @@ Git and the REST API use the same host, and both take a personal access token
 `az devops` extension. Inside the sandbox, `AZURE_DEVOPS_EXT_PAT` holds a
 phantom token. `AZURE_CONFIG_DIR` and `AZURE_DEVOPS_CACHE_DIR` point into the
 artifact directory, because the sandbox cannot write the default locations.
+`nn` also writes the `az devops` defaults there, so a command needs no `--org`
+or `--project` flag.
+
+`nn` takes `organization` and `project` from the Azure DevOps remotes of the
+repository. There is no default. If no remote names one, or if the remotes name
+more than one, set the key in `nn.toml`, or the run stops with an error. Only
+the `az devops` defaults use `project`, so with `az_cli = false` you can leave
+it out.
 
 ```toml
 [tools.azure_devops]
-organization = "my-org"
 secret = "AZURE_DEVOPS_PAT"
+# Only needed when the remotes do not name exactly one of each.
+organization = "my-org"
+project = "My Project"
 ```
 
 The proxy can only add a credential to an HTTPS request, so `nn` rewrites ssh
@@ -182,7 +192,7 @@ from the remotes of the current repository. A remote can also use a host alias
 that ends in `.ssh.dev.azure.com`, such as `team.ssh.dev.azure.com`, and `nn`
 rewrites it in that spelling. If the agent must clone a project
 that is not a remote, add it to `projects`. `nn` only rewrites the projects of
-the configured organization, because the token belongs to that organization.
+that organization, because the token belongs to that organization.
 
 The tool does not cover the older `{org}.visualstudio.com` host.
 

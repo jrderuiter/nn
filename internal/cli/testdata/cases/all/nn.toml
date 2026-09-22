@@ -11,6 +11,7 @@ email = "test@example.com"
 
 [tools.azure_devops]
 organization = "acme"
+project = "Platform"
 projects = ["Platform"]
 
 [tools.kubernetes]
