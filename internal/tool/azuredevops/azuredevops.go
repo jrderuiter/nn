@@ -20,10 +20,14 @@ import (
 // Config is the [tools.azure_devops] table.
 type Config struct {
 	// Organization is the name in dev.azure.com/{organization}. A token
-	// belongs to one organization, so only its remotes are rewritten.
-	Organization string `toml:"organization" help:"organization name in dev.azure.com/{organization}"`
+	// belongs to one organization, so only its remotes are rewritten. Without
+	// it, nn takes the organization from the remotes.
+	Organization string `toml:"organization" help:"organization in dev.azure.com/{organization}; else from the remotes"`
 	// Secret is the fnox key that holds the personal access token.
 	Secret string `toml:"secret" help:"fnox key holding the personal access token"`
+	// Project is the default project for az devops. Without it, nn takes the
+	// project from the remotes.
+	Project string `toml:"project" help:"default project for az devops; else from the remotes"`
 	// Projects are rewritten to HTTPS on top of the ones that the remotes of
 	// the repository name, so the agent can clone them over ssh too.
 	Projects []string `toml:"projects" help:"extra projects whose ssh remotes use HTTPS"`
@@ -52,9 +56,6 @@ func New(md toml.MetaData, prim toml.Primitive) (tool.Provider, error) {
 	cfg := Config{Secret: "AZURE_DEVOPS_PAT"}
 	if err := md.PrimitiveDecode(prim, &cfg); err != nil {
 		return nil, err
-	}
-	if cfg.Organization == "" {
-		return nil, fmt.Errorf("organization must be set")
 	}
 	if cfg.Secret == "" {
 		return nil, fmt.Errorf("secret must not be empty")
@@ -108,19 +109,94 @@ func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error)
 		}
 	}
 
+	var remotes []string
+	if e.GitRemotes != nil {
+		var err error
+		if remotes, err = e.GitRemotes(ctx); err != nil {
+			return nil, fmt.Errorf("list git remotes: %w", err)
+		}
+	}
+
 	r := &tool.Result{
 		Fragment: f,
 		// Azure DevOps ignores the user name, and documents an empty one.
 		Secrets: []tool.Secret{{EnvVar: tokenVar, Key: p.cfg.Secret, Format: ":{}"}},
 	}
-	if *p.cfg.RewriteSSH {
-		projects, err := p.projects(ctx, e)
+	org, err := infer("organization", p.cfg.Organization, remotes, func(pr project) (string, bool) {
+		return pr.org, true
+	})
+	if err != nil {
+		return nil, err
+	}
+	if *p.cfg.AzCLI {
+		proj, err := infer("project", p.cfg.Project, remotes, func(pr project) (string, bool) {
+			return pr.name, strings.EqualFold(pr.org, org)
+		})
 		if err != nil {
 			return nil, err
 		}
-		r.GitConfig = sshRewrite(projects)
+		r.Artifacts = []tool.Artifact{{
+			RelPath: "az/azuredevops/config",
+			Mode:    0o644,
+			Content: devopsDefaults(org, proj),
+		}}
+	}
+	if *p.cfg.RewriteSSH {
+		r.GitConfig = sshRewrite(p.projects(org, remotes))
 	}
 	return r, nil
+}
+
+// infer returns the configured value, or else the one value that the Azure
+// DevOps remotes of the repository name. There is no default: with no such
+// remote, or with remotes that disagree, any choice would be a guess, so the
+// user has to set the key.
+func infer(key, configured string, remotes []string, pick func(project) (string, bool)) (string, error) {
+	if configured != "" {
+		return configured, nil
+	}
+	// Azure DevOps treats organization and project names without regard to
+	// case, so remotes that differ only in case agree.
+	var found []string
+	for _, r := range remotes {
+		pr, ok := parseRemote(r)
+		if !ok {
+			continue
+		}
+		v, ok := pick(pr)
+		if !ok {
+			continue
+		}
+		dup := false
+		for _, f := range found {
+			dup = dup || strings.EqualFold(f, v)
+		}
+		if !dup {
+			found = append(found, v)
+		}
+	}
+	switch len(found) {
+	case 1:
+		return found[0], nil
+	case 0:
+		return "", fmt.Errorf("%s is not set, and no Azure DevOps remote names one", key)
+	default:
+		sort.Strings(found)
+		return "", fmt.Errorf("%s is not set, and the remotes name more than one: %s",
+			key, strings.Join(found, ", "))
+	}
+}
+
+// devopsDefaults is the file that `az devops configure --defaults` writes.
+// With it, az devops commands need no --org or --project flag, so an agent
+// does not have to find either value first.
+func devopsDefaults(org, proj string) []byte {
+	// The file holds the project as a person types it. A remote escapes a
+	// space as %20.
+	if unescaped, err := url.PathUnescape(proj); err == nil {
+		proj = unescaped
+	}
+	return []byte("[defaults]\norganization = https://dev.azure.com/" + org + "\nproject = " + proj + "\n")
 }
 
 // project is one organization and project, spelled as the remote spells them.
@@ -134,7 +210,7 @@ type project struct{ from, org, name string }
 // of an ssh remote, and a remote also keeps its own. They come out sorted and
 // without duplicates, so the profile does not depend on the order of the
 // remotes.
-func (p *provider) projects(ctx context.Context, e *tool.Env) ([]project, error) {
+func (p *provider) projects(org string, remotes []string) []project {
 	seen := map[project]bool{}
 	add := func(pr project) {
 		seen[pr] = true
@@ -144,18 +220,12 @@ func (p *provider) projects(ctx context.Context, e *tool.Env) ([]project, error)
 	}
 	for _, name := range p.cfg.Projects {
 		// A remote escapes a space as %20, so a configured name must too.
-		add(project{sshPrefixes[0], p.cfg.Organization, url.PathEscape(name)})
+		add(project{sshPrefixes[0], org, url.PathEscape(name)})
 	}
-	if e.GitRemotes != nil {
-		remotes, err := e.GitRemotes(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("list git remotes: %w", err)
-		}
-		for _, r := range remotes {
-			// Azure DevOps treats organization names without regard to case.
-			if pr, ok := parseSSH(r); ok && strings.EqualFold(pr.org, p.cfg.Organization) {
-				add(pr)
-			}
+	for _, r := range remotes {
+		// Azure DevOps treats organization names without regard to case.
+		if pr, ok := parseSSH(r); ok && strings.EqualFold(pr.org, org) {
+			add(pr)
 		}
 	}
 	out := make([]project, 0, len(seen))
@@ -172,7 +242,7 @@ func (p *provider) projects(ctx context.Context, e *tool.Env) ([]project, error)
 		}
 		return a.from < b.from
 	})
-	return out, nil
+	return out
 }
 
 // sshPrefixes are the two default spellings of an Azure DevOps ssh remote.
@@ -212,6 +282,28 @@ func parseSSH(remote string) (project, bool) {
 		return project{}, false
 	}
 	return project{from, parts[0], parts[1]}, true
+}
+
+// parseRemote reads the organization and project from a remote in either the
+// ssh form or the HTTPS form, https://dev.azure.com/{org}/{project}/_git/{repo}.
+// The HTTPS form may carry a user name before the host.
+func parseRemote(remote string) (project, bool) {
+	if pr, ok := parseSSH(remote); ok {
+		return pr, true
+	}
+	rest, ok := strings.CutPrefix(remote, "https://")
+	if !ok {
+		return project{}, false
+	}
+	if at := strings.Index(rest, "@"); at >= 0 && at < strings.Index(rest, "/") {
+		rest = rest[at+1:]
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) != 5 || parts[0] != "dev.azure.com" || parts[3] != "_git" ||
+		parts[1] == "" || parts[2] == "" || parts[4] == "" {
+		return project{}, false
+	}
+	return project{"", parts[1], parts[2]}, true
 }
 
 // sshRewrite makes git use HTTPS for the given projects even when a remote is
