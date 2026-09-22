@@ -2,6 +2,7 @@ package azuredevops
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/BurntSushi/toml"
@@ -9,6 +10,9 @@ import (
 	"github.com/jrderuiter/nn/internal/secrets"
 	"github.com/jrderuiter/nn/internal/tool"
 )
+
+// acme sets both keys, for the tests that are not about inferring them.
+const acme = "organization = \"acme\"\nproject = \"Platform\"\n"
 
 func newProvider(body string) (tool.Provider, error) {
 	var cfg struct {
@@ -38,16 +42,56 @@ func build(t *testing.T, body string, remotes ...string) *tool.Result {
 	return r
 }
 
-// A token belongs to one organization, so there is nothing to grant without
-// one.
-func TestOrganizationIsRequired(t *testing.T) {
-	if _, err := newProvider(""); err == nil {
-		t.Fatal("a missing organization must be an error")
+func buildErr(t *testing.T, body string, remotes ...string) error {
+	t.Helper()
+	p, err := newProvider(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p.Build(context.Background(), &tool.Env{
+		GitRemotes: func(context.Context) ([]string, error) { return remotes, nil },
+	})
+	return err
+}
+
+// There is no default organization or project. With no remote to infer them
+// from, the user must set them, or the agent would work against a guess.
+func TestWithoutRemotesBothKeysAreRequired(t *testing.T) {
+	if err := buildErr(t, `project = "Platform"`); err == nil || !strings.Contains(err.Error(), "organization") {
+		t.Fatalf("a missing organization must be an error, got %v", err)
+	}
+	if err := buildErr(t, `organization = "acme"`); err == nil || !strings.Contains(err.Error(), "project") {
+		t.Fatalf("a missing project must be an error, got %v", err)
+	}
+}
+
+// Remotes that disagree name no single value, so the user must choose.
+func TestAmbiguousRemotesAreAnError(t *testing.T) {
+	err := buildErr(t, `organization = "acme"`,
+		"git@ssh.dev.azure.com:v3/acme/Platform/api",
+		"https://dev.azure.com/acme/Web/_git/site",
+	)
+	if err == nil || !strings.Contains(err.Error(), "Platform, Web") {
+		t.Fatalf("got %v", err)
+	}
+	if err := buildErr(t, "",
+		"git@ssh.dev.azure.com:v3/acme/Platform/api",
+		"git@ssh.dev.azure.com:v3/other/Platform/api",
+	); err == nil || !strings.Contains(err.Error(), "organization") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+// Only the az devops defaults use the project, so with az_cli off it is not
+// needed.
+func TestProjectIsOnlyNeededForAzCLI(t *testing.T) {
+	if err := buildErr(t, "organization = \"acme\"\naz_cli = false\n"); err != nil {
+		t.Fatal(err)
 	}
 }
 
 func TestOneRouteCoversGitAndTheAPI(t *testing.T) {
-	r := build(t, `organization = "acme"`)
+	r := build(t, acme)
 	n := r.Fragment.Network
 	if len(n.AllowDomain) != 1 || n.AllowDomain[0].Domain != "dev.azure.com" {
 		t.Fatalf("got %+v", n.AllowDomain)
@@ -67,7 +111,7 @@ func TestOneRouteCoversGitAndTheAPI(t *testing.T) {
 }
 
 func TestAzCLICanBeTurnedOff(t *testing.T) {
-	vars := build(t, `organization = "acme"`).Fragment.Environment.SetVars
+	vars := build(t, acme).Fragment.Environment.SetVars
 	if vars["AZURE_CONFIG_DIR"] == "" {
 		t.Fatal("the az configuration should be redirected by default")
 	}
@@ -76,7 +120,7 @@ func TestAzCLICanBeTurnedOff(t *testing.T) {
 	if vars["AZURE_DEVOPS_CACHE_DIR"] == "" {
 		t.Fatal("the Azure DevOps cache should be redirected by default")
 	}
-	if build(t, "organization = \"acme\"\naz_cli = false\n").Fragment.Environment.SetVars != nil {
+	if build(t, acme+"az_cli = false\n").Fragment.Environment.SetVars != nil {
 		t.Fatal("az_cli = false should set nothing")
 	}
 }
@@ -108,7 +152,7 @@ func TestParseSSH(t *testing.T) {
 // The remotes and the configured projects merge into one sorted list, so the
 // profile does not depend on the order in which git lists the remotes.
 func TestProjectsComeFromRemotesAndConfiguration(t *testing.T) {
-	r := build(t, "organization = \"acme\"\nprojects = [\"Platform\", \"Data Science\"]\n",
+	r := build(t, acme+"projects = [\"Platform\", \"Data Science\"]\n",
 		"git@ssh.dev.azure.com:v3/acme/Web/site",
 		"ssh://git@ssh.dev.azure.com/v3/acme/Platform/api",
 		"git@ssh.dev.azure.com:v3/other/Secret/repo",
@@ -137,7 +181,7 @@ func TestProjectsComeFromRemotesAndConfiguration(t *testing.T) {
 
 // Both spellings of an ssh remote have to be covered.
 func TestBothSSHSpellingsAreRewritten(t *testing.T) {
-	got := build(t, "organization = \"acme\"\nprojects = [\"Platform\"]\n").GitConfig
+	got := build(t, acme+"projects = [\"Platform\"]\n").GitConfig
 	want := []tool.GitConfig{
 		{Key: "url.https://dev.azure.com/acme/Platform/_git/.insteadOf", Value: "git@ssh.dev.azure.com:v3/acme/Platform/"},
 		{Key: "url.https://dev.azure.com/acme/Platform/_git/.insteadOf", Value: "ssh://git@ssh.dev.azure.com/v3/acme/Platform/"},
@@ -148,7 +192,7 @@ func TestBothSSHSpellingsAreRewritten(t *testing.T) {
 }
 
 func TestRewriteCanBeTurnedOff(t *testing.T) {
-	r := build(t, "organization = \"acme\"\nprojects = [\"Platform\"]\nrewrite_ssh = false\n",
+	r := build(t, acme+"projects = [\"Platform\"]\nrewrite_ssh = false\n",
 		"git@ssh.dev.azure.com:v3/acme/Web/site")
 	if len(r.GitConfig) != 0 {
 		t.Fatalf("rewrite_ssh = false should write no git configuration, got %+v", r.GitConfig)
@@ -159,7 +203,7 @@ func TestRewriteCanBeTurnedOff(t *testing.T) {
 // already be a user:password pair. A bare token reaches Azure DevOps as a
 // malformed pair, and every request fails with 401.
 func TestTokenIsStoredAsABasicAuthPair(t *testing.T) {
-	if f := build(t, `organization = "acme"`).Secrets[0].Format; f != ":{}" {
+	if f := build(t, acme).Secrets[0].Format; f != ":{}" {
 		t.Fatalf("got format %q", f)
 	}
 }
@@ -167,7 +211,7 @@ func TestTokenIsStoredAsABasicAuthPair(t *testing.T) {
 // insteadOf compares the literal start of a URL, so a remote that uses a host
 // alias needs a rewrite in its own spelling.
 func TestHostAliasKeepsItsSpelling(t *testing.T) {
-	got := build(t, `organization = "acme"`, "git@team.ssh.dev.azure.com:v3/acme/Platform/api").GitConfig
+	got := build(t, acme, "git@team.ssh.dev.azure.com:v3/acme/Platform/api").GitConfig
 	want := "git@team.ssh.dev.azure.com:v3/acme/Platform/"
 	for _, e := range got {
 		if e.Value == want {
@@ -178,4 +222,38 @@ func TestHostAliasKeepsItsSpelling(t *testing.T) {
 		}
 	}
 	t.Fatalf("no rewrite for %q in %+v", want, got)
+}
+
+func defaults(t *testing.T, body string, remotes ...string) string {
+	t.Helper()
+	for _, a := range build(t, body, remotes...).Artifacts {
+		if a.RelPath == "az/azuredevops/config" {
+			return string(a.Content)
+		}
+	}
+	t.Fatal("no az devops defaults file")
+	return ""
+}
+
+// With the defaults file, az devops needs no --org or --project flag. Both
+// values come from the remote when nn.toml does not set them.
+func TestDefaultsNameTheOrganizationAndTheProject(t *testing.T) {
+	got := defaults(t, "", "https://acme@dev.azure.com/acme/Data%20Science/_git/models")
+	want := "[defaults]\norganization = https://dev.azure.com/acme\nproject = Data Science\n"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestConfiguredProjectWins(t *testing.T) {
+	got := defaults(t, "organization = \"acme\"\nproject = \"Web\"\n", "git@ssh.dev.azure.com:v3/acme/Platform/api")
+	if got != "[defaults]\norganization = https://dev.azure.com/acme\nproject = Web\n" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestAzCLIOffWritesNoDefaults(t *testing.T) {
+	if a := build(t, acme+"az_cli = false\n").Artifacts; len(a) != 0 {
+		t.Fatalf("got %+v", a)
+	}
 }
