@@ -27,6 +27,10 @@ type Env struct {
 	HomeDir     string
 	Secrets     *secrets.Resolver
 	Lookup      func(string) (string, bool) // host environment, for preflight only
+	// GitRemotes lists the remote URLs of the repository in Workdir. It is a
+	// function, like Lookup, so a test can hand a provider a fixed set without
+	// a real repository. It returns nothing when Workdir is not a repository.
+	GitRemotes func(ctx context.Context) ([]string, error)
 }
 
 // Artifact is a file that the generated profile refers to.
@@ -64,6 +68,19 @@ type Result struct {
 	// They never reach the sandbox: the profile lists no such name in
 	// allow_vars, and the proxy gives the child a phantom token instead.
 	Secrets []Secret
+	// GitConfig are git configuration entries for the sandbox. They reach git
+	// through GIT_CONFIG_COUNT and the numbered GIT_CONFIG_KEY_n and
+	// GIT_CONFIG_VALUE_n variables. That form is one numbered list per
+	// process, so two tools that each wrote it would conflict. The pipeline
+	// numbers the entries of every tool in one list instead.
+	GitConfig []GitConfig
+}
+
+// GitConfig is one git configuration entry, for example an insteadOf rewrite.
+// A key may repeat, as git allows for multi-valued keys.
+type GitConfig struct {
+	Key   string
+	Value string
 }
 
 // Provider is one tool.

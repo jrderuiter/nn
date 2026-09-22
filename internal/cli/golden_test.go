@@ -62,6 +62,17 @@ func buildCase(t *testing.T, dir string) *plan {
 	// A fixed home and a fixed proxy port keep the output stable.
 	t.Setenv("HOME", filepath.Join(abs, "home"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(abs, "home", ".cache"))
+	// A case cannot hold a real .git directory, because git does not commit
+	// one, so the remotes come from a fixture file with one URL per line.
+	savedRemotes := gitRemotes
+	t.Cleanup(func() { gitRemotes = savedRemotes })
+	gitRemotes = func(context.Context, string) ([]string, error) {
+		body, err := os.ReadFile(filepath.Join(abs, "remotes"))
+		if err != nil {
+			return nil, nil
+		}
+		return strings.Fields(string(body)), nil
+	}
 	saved := opts
 	t.Cleanup(func() { opts = saved })
 	opts = options{
