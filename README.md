@@ -164,7 +164,8 @@ The `azure_devops` tool gives the agent one organization on `dev.azure.com`.
 Git and the REST API use the same host, and both take a personal access token
 (PAT) as a basic auth password. So one proxy route covers git, the API and the
 `az devops` extension. Inside the sandbox, `AZURE_DEVOPS_EXT_PAT` holds a
-phantom token, and `AZURE_CONFIG_DIR` points into the artifact directory.
+phantom token. `AZURE_CONFIG_DIR` and `AZURE_DEVOPS_CACHE_DIR` point into the
+artifact directory, because the sandbox cannot write the default locations.
 
 ```toml
 [tools.azure_devops]
