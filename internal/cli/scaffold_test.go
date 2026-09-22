@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -8,26 +9,22 @@ import (
 	"github.com/jrderuiter/nn/internal/config"
 )
 
-// A first run in an empty project writes a file the user can edit, and that
-// file has to load as the configuration it claims to be.
-func TestEnsureConfigWritesAMinimalFile(t *testing.T) {
+// init in an empty project writes an empty file, and that file has to load.
+func TestEnsureConfigWritesAnEmptyFile(t *testing.T) {
 	dir := t.TempDir()
 	if err := ensureConfig(options{workdir: dir}); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, config.FileName)
-	if _, err := os.Stat(path); err != nil {
+	got, err := os.ReadFile(path)
+	if err != nil {
 		t.Fatalf("expected a generated %s: %v", config.FileName, err)
 	}
-	cfg, err := config.Load(config.Options{Dir: dir, Explicit: path})
-	if err != nil {
+	if len(got) != 0 {
+		t.Errorf("expected an empty file, got:\n%s", got)
+	}
+	if _, err := config.Load(config.Options{Dir: dir, Explicit: path}); err != nil {
 		t.Fatalf("the generated file must load: %v", err)
-	}
-	if cfg.Nono.NetworkProfile != "minimal" {
-		t.Errorf("expected a narrowed network, got %q", cfg.Nono.NetworkProfile)
-	}
-	if len(cfg.Nono.Extends) != 1 || cfg.Nono.Extends[0] != "default" {
-		t.Errorf("got extends %v", cfg.Nono.Extends)
 	}
 }
 
@@ -83,5 +80,32 @@ func TestEnsureConfigSkipsAnExplicitPath(t *testing.T) {
 		if _, err := os.Stat(p); err == nil {
 			t.Errorf("--config must write nothing, but %s exists", p)
 		}
+	}
+}
+
+// Every command but init refuses to run without a project file, and writes
+// nothing.
+func TestRequireConfigFailsWithoutAFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := requireConfig(options{workdir: dir}); !errors.Is(err, errNoConfig) {
+		t.Fatalf("expected errNoConfig, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, config.FileName)); err == nil {
+		t.Error("a missing configuration must not be created")
+	}
+}
+
+// The project file above a subdirectory counts, as it does for the loader.
+func TestRequireConfigFindsTheProjectFile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, config.FileName), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(root, "service")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := requireConfig(options{workdir: sub}); err != nil {
+		t.Fatal(err)
 	}
 }
