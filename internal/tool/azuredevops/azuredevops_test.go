@@ -81,9 +81,13 @@ func TestParseSSH(t *testing.T) {
 		want   project
 		ok     bool
 	}{
-		{"git@ssh.dev.azure.com:v3/acme/Platform/api", project{"acme", "Platform"}, true},
-		{"ssh://git@ssh.dev.azure.com/v3/acme/Platform/api", project{"acme", "Platform"}, true},
-		{"git@ssh.dev.azure.com:v3/acme/Data%20Science/models", project{"acme", "Data%20Science"}, true},
+		{"git@ssh.dev.azure.com:v3/acme/Platform/api", project{"git@ssh.dev.azure.com:v3/", "acme", "Platform"}, true},
+		{"ssh://git@ssh.dev.azure.com/v3/acme/Platform/api", project{"ssh://git@ssh.dev.azure.com/v3/", "acme", "Platform"}, true},
+		{"git@ssh.dev.azure.com:v3/acme/Data%20Science/models", project{"git@ssh.dev.azure.com:v3/", "acme", "Data%20Science"}, true},
+		// A host alias from an ssh configuration, which picks a key.
+		{"git@team.ssh.dev.azure.com:v3/acme/Platform/api", project{"git@team.ssh.dev.azure.com:v3/", "acme", "Platform"}, true},
+		{"git@evilssh.dev.azure.com:v3/acme/Platform/api", project{}, false},
+		{"git@ssh.dev.azure.com:acme/Platform/api", project{}, false},
 		{"https://dev.azure.com/acme/Platform/_git/api", project{}, false},
 		{"git@github.com:acme/api.git", project{}, false},
 		{"git@ssh.dev.azure.com:v3/acme/Platform", project{}, false},
@@ -105,8 +109,8 @@ func TestProjectsComeFromRemotesAndConfiguration(t *testing.T) {
 		"git@github.com:acme/api.git",
 	)
 	var keys []string
-	for i, e := range r.GitConfig {
-		if i%2 == 0 {
+	for _, e := range r.GitConfig {
+		if len(keys) == 0 || keys[len(keys)-1] != e.Key {
 			keys = append(keys, e.Key)
 		}
 	}
@@ -152,4 +156,20 @@ func TestTokenIsStoredAsABasicAuthPair(t *testing.T) {
 	if f := build(t, `organization = "acme"`).Secrets[0].Format; f != ":{}" {
 		t.Fatalf("got format %q", f)
 	}
+}
+
+// insteadOf compares the literal start of a URL, so a remote that uses a host
+// alias needs a rewrite in its own spelling.
+func TestHostAliasKeepsItsSpelling(t *testing.T) {
+	got := build(t, `organization = "acme"`, "git@team.ssh.dev.azure.com:v3/acme/Platform/api").GitConfig
+	want := "git@team.ssh.dev.azure.com:v3/acme/Platform/"
+	for _, e := range got {
+		if e.Value == want {
+			if e.Key != "url.https://dev.azure.com/acme/Platform/_git/.insteadOf" {
+				t.Fatalf("wrong target %q", e.Key)
+			}
+			return
+		}
+	}
+	t.Fatalf("no rewrite for %q in %+v", want, got)
 }
