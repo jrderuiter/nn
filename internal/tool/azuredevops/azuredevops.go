@@ -105,7 +105,8 @@ func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error)
 
 	r := &tool.Result{
 		Fragment: f,
-		Secrets:  []tool.Secret{{EnvVar: tokenVar, Key: p.cfg.Secret}},
+		// Azure DevOps ignores the user name, and documents an empty one.
+		Secrets: []tool.Secret{{EnvVar: tokenVar, Key: p.cfg.Secret, Format: ":{}"}},
 	}
 	if *p.cfg.RewriteSSH {
 		projects, err := p.projects(ctx, e)

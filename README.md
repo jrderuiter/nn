@@ -142,6 +142,11 @@ asks at launch, which is a moment you can judge. Fetching on demand would ask
 in the middle of a session, next to whatever the agent was doing, and teach you
 to approve a secret whenever an agent asks for one.
 
+Store a token as the bare value. A git route authenticates with basic auth,
+and nono sends the stored value as the user and password pair, so `nn` adds the
+user name itself: `x-access-token` for GitHub, and an empty name for Azure
+DevOps.
+
 The Kubernetes token is different: nono mints it with `kubectl create token` and
 renews it as it expires, which needs no approval and cannot be done once at
 launch.

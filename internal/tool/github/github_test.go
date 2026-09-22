@@ -161,3 +161,17 @@ func TestGitOffAllowsOnlyTheAPIHost(t *testing.T) {
 		t.Fatalf("got %+v", doms)
 	}
 }
+
+// nono base64-encodes a basic_auth value as it is, so the git route needs a
+// user:token pair, while the header route needs the bare token.
+func TestGitRouteStoresABasicAuthPair(t *testing.T) {
+	for _, s := range build(t, "").Secrets {
+		want := ""
+		if s.EnvVar == "NN_GITHUB_GIT_AUTH" {
+			want = "x-access-token:{}"
+		}
+		if s.Format != want {
+			t.Errorf("%s has format %q, want %q", s.EnvVar, s.Format, want)
+		}
+	}
+}
