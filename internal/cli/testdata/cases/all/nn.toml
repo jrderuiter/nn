@@ -9,6 +9,10 @@ email = "test@example.com"
 
 [tools.github]
 
+[tools.azure_devops]
+organization = "acme"
+projects = ["Platform"]
+
 [tools.kubernetes]
 context = "prod-eks"
 service_account = "claude-ro"

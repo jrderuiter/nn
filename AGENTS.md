@@ -22,7 +22,7 @@ the reasons behind the design.
 | `internal/cli` | The cobra commands, and the pipeline that builds a run |
 | `internal/config` | Loading and merging `nn.toml`, plus the environment layer |
 | `internal/tool` | The provider contract and the registry. A provider is the code behind one tool. |
-| `internal/tool/<name>` | One tool each: `runtime`, `git`, `github`, `kubernetes` |
+| `internal/tool/<name>` | One tool each: `runtime`, `git`, `github`, `azuredevops`, `kubernetes` |
 | `internal/nono` | The profile types, the merger, and the call to `nono` |
 | `internal/workspace` | The generated artifact directory under `.nono/nn` |
 | `internal/secrets` | Resolving a secret with `fnox get` |

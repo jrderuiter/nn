@@ -18,6 +18,7 @@ import (
 	"github.com/jrderuiter/nn/internal/workspace"
 
 	// Providers register themselves.
+	_ "github.com/jrderuiter/nn/internal/tool/azuredevops"
 	_ "github.com/jrderuiter/nn/internal/tool/git"
 	_ "github.com/jrderuiter/nn/internal/tool/github"
 	_ "github.com/jrderuiter/nn/internal/tool/kubernetes"
