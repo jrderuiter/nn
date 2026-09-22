@@ -38,8 +38,9 @@ func requireConfig(o options) error {
 	return nil
 }
 
-// ensureConfig writes an empty nn.toml when the project has none, so that init
-// is the one step that marks a directory as an nn project.
+// ensureConfig writes the example nn.toml when the project has none, so that
+// init is the one step that marks a directory as an nn project, and the file it
+// leaves names every setting there is to change.
 //
 // It looks for the project file the same way the loader does, by walking up,
 // and writes nothing when that search finds one. Writing a second file in a
@@ -58,9 +59,9 @@ func ensureConfig(o options) error {
 		return nil
 	}
 	path := filepath.Join(dir, config.FileName)
-	if err := os.WriteFile(path, nil, 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(example()), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
-	fmt.Fprintf(os.Stderr, "nn: wrote an empty %s; run `nn example` for every setting\n", path)
+	fmt.Fprintf(os.Stderr, "nn: wrote %s; edit it to suit the project\n", path)
 	return nil
 }

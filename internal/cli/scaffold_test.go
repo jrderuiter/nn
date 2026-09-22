@@ -9,8 +9,8 @@ import (
 	"github.com/jrderuiter/nn/internal/config"
 )
 
-// init in an empty project writes an empty file, and that file has to load.
-func TestEnsureConfigWritesAnEmptyFile(t *testing.T) {
+// init in an empty project writes the example, and that file has to load.
+func TestEnsureConfigWritesTheExample(t *testing.T) {
 	dir := t.TempDir()
 	if err := ensureConfig(options{workdir: dir}); err != nil {
 		t.Fatal(err)
@@ -20,8 +20,8 @@ func TestEnsureConfigWritesAnEmptyFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected a generated %s: %v", config.FileName, err)
 	}
-	if len(got) != 0 {
-		t.Errorf("expected an empty file, got:\n%s", got)
+	if string(got) != example() {
+		t.Errorf("expected the example, got:\n%s", got)
 	}
 	if _, err := config.Load(config.Options{Dir: dir, Explicit: path}); err != nil {
 		t.Fatalf("the generated file must load: %v", err)
