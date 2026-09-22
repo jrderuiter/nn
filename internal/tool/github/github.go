@@ -126,7 +126,8 @@ func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error)
 	secrets := []tool.Secret{{EnvVar: tokenVar, Key: p.cfg.Secret}}
 	if *p.cfg.Git {
 		// The same fnox key, read once and placed under a second name.
-		secrets = append(secrets, tool.Secret{EnvVar: gitVar, Key: p.cfg.Secret})
+		// GitHub takes a token as the password for any user name.
+		secrets = append(secrets, tool.Secret{EnvVar: gitVar, Key: p.cfg.Secret, Format: "x-access-token:{}"})
 	}
 	r := &tool.Result{Fragment: f, Secrets: secrets}
 	if *p.cfg.Git && *p.cfg.RewriteSSH {

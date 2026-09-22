@@ -381,6 +381,9 @@ func (p *plan) resolveSecrets(ctx context.Context) ([]string, error) {
 			}
 			byKey[s.Key] = value
 		}
+		if s.Format != "" {
+			value = strings.ReplaceAll(s.Format, "{}", value)
+		}
 		out = append(out, s.EnvVar+"="+value)
 	}
 	return out, nil

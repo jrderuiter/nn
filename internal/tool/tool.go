@@ -52,6 +52,10 @@ type Secret struct {
 	EnvVar string
 	// Key is the fnox key that holds the value.
 	Key string
+	// Format wraps the value, with {} standing for it. Empty means the value
+	// as it is. A basic_auth route needs it: nono base64-encodes the stored
+	// value as it is, so it must already be a user:password pair.
+	Format string
 }
 
 // Result is what a provider contributes to the run.
