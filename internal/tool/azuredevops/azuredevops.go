@@ -98,9 +98,14 @@ func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error)
 	}
 
 	if *p.cfg.AzCLI {
-		// No filesystem grant: this sits inside the artifact directory, which
-		// the base profile already grants recursively.
-		f.Environment.SetVars = map[string]string{"AZURE_CONFIG_DIR": workspace.ProfileVar + "/az"}
+		// No filesystem grant: both sit inside the artifact directory, which
+		// the base profile already grants recursively. The Azure DevOps SDK
+		// keeps its cache in ~/.azure-devops rather than under
+		// AZURE_CONFIG_DIR, and fails when it cannot write there.
+		f.Environment.SetVars = map[string]string{
+			"AZURE_CONFIG_DIR":       workspace.ProfileVar + "/az",
+			"AZURE_DEVOPS_CACHE_DIR": workspace.ProfileVar + "/az/devops-cache",
+		}
 	}
 
 	r := &tool.Result{

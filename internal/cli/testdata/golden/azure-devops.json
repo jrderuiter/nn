@@ -37,6 +37,7 @@
     ],
     "set_vars": {
       "AZURE_CONFIG_DIR": "$WORKDIR/.nono/nn/az",
+      "AZURE_DEVOPS_CACHE_DIR": "$WORKDIR/.nono/nn/az/devops-cache",
       "GIT_CONFIG_COUNT": "5",
       "GIT_CONFIG_KEY_0": "url.https://dev.azure.com/acme/Data%20Science/_git/.insteadOf",
       "GIT_CONFIG_KEY_1": "url.https://dev.azure.com/acme/Data%20Science/_git/.insteadOf",

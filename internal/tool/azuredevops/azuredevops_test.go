@@ -67,8 +67,14 @@ func TestOneRouteCoversGitAndTheAPI(t *testing.T) {
 }
 
 func TestAzCLICanBeTurnedOff(t *testing.T) {
-	if build(t, `organization = "acme"`).Fragment.Environment.SetVars["AZURE_CONFIG_DIR"] == "" {
+	vars := build(t, `organization = "acme"`).Fragment.Environment.SetVars
+	if vars["AZURE_CONFIG_DIR"] == "" {
 		t.Fatal("the az configuration should be redirected by default")
+	}
+	// The SDK cache lives outside AZURE_CONFIG_DIR, in a host path that the
+	// sandbox cannot write.
+	if vars["AZURE_DEVOPS_CACHE_DIR"] == "" {
+		t.Fatal("the Azure DevOps cache should be redirected by default")
 	}
 	if build(t, "organization = \"acme\"\naz_cli = false\n").Fragment.Environment.SetVars != nil {
 		t.Fatal("az_cli = false should set nothing")
