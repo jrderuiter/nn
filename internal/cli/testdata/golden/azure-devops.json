@@ -37,15 +37,17 @@
     ],
     "set_vars": {
       "AZURE_CONFIG_DIR": "$WORKDIR/.nono/nn/az",
-      "GIT_CONFIG_COUNT": "4",
+      "GIT_CONFIG_COUNT": "5",
       "GIT_CONFIG_KEY_0": "url.https://dev.azure.com/acme/Data%20Science/_git/.insteadOf",
       "GIT_CONFIG_KEY_1": "url.https://dev.azure.com/acme/Data%20Science/_git/.insteadOf",
       "GIT_CONFIG_KEY_2": "url.https://dev.azure.com/acme/Platform/_git/.insteadOf",
       "GIT_CONFIG_KEY_3": "url.https://dev.azure.com/acme/Platform/_git/.insteadOf",
+      "GIT_CONFIG_KEY_4": "url.https://dev.azure.com/acme/Platform/_git/.insteadOf",
       "GIT_CONFIG_VALUE_0": "git@ssh.dev.azure.com:v3/acme/Data%20Science/",
       "GIT_CONFIG_VALUE_1": "ssh://git@ssh.dev.azure.com/v3/acme/Data%20Science/",
       "GIT_CONFIG_VALUE_2": "git@ssh.dev.azure.com:v3/acme/Platform/",
-      "GIT_CONFIG_VALUE_3": "ssh://git@ssh.dev.azure.com/v3/acme/Platform/"
+      "GIT_CONFIG_VALUE_3": "git@team.ssh.dev.azure.com:v3/acme/Platform/",
+      "GIT_CONFIG_VALUE_4": "ssh://git@ssh.dev.azure.com/v3/acme/Platform/"
     }
   },
   "workdir": {

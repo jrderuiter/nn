@@ -177,7 +177,9 @@ remotes to HTTPS. An ssh remote has the form
 `git@ssh.dev.azure.com:v3/{org}/{project}/{repo}`, but the HTTPS form puts
 `_git` between the project and the repository. Git can only replace a fixed
 start of a URL, so `nn` writes one rewrite per project. It takes the projects
-from the remotes of the current repository. If the agent must clone a project
+from the remotes of the current repository. A remote can also use a host alias
+that ends in `.ssh.dev.azure.com`, such as `team.ssh.dev.azure.com`, and `nn`
+rewrites it in that spelling. If the agent must clone a project
 that is not a remote, add it to `projects`. `nn` only rewrites the projects of
 the configured organization, because the token belongs to that organization.
 
