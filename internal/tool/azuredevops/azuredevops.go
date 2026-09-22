@@ -119,17 +119,27 @@ func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error)
 }
 
 // project is one organization and project, spelled as the remote spells them.
-// insteadOf matches case sensitively, so the spelling must be kept.
-type project struct{ org, name string }
+// insteadOf matches case sensitively, so the spelling must be kept. from is
+// the part of the remote before the organization, for example
+// git@ssh.dev.azure.com:v3/. It varies with the host alias of the remote.
+type project struct{ from, org, name string }
 
 // projects lists the projects to rewrite: the ones that the remotes of the
-// repository name, plus the configured ones. They come out sorted and without
-// duplicates, so the profile does not depend on the order of the remotes.
+// repository name, plus the configured ones. Each gets both default spellings
+// of an ssh remote, and a remote also keeps its own. They come out sorted and
+// without duplicates, so the profile does not depend on the order of the
+// remotes.
 func (p *provider) projects(ctx context.Context, e *tool.Env) ([]project, error) {
 	seen := map[project]bool{}
+	add := func(pr project) {
+		seen[pr] = true
+		for _, from := range sshPrefixes {
+			seen[project{from, pr.org, pr.name}] = true
+		}
+	}
 	for _, name := range p.cfg.Projects {
 		// A remote escapes a space as %20, so a configured name must too.
-		seen[project{p.cfg.Organization, url.PathEscape(name)}] = true
+		add(project{sshPrefixes[0], p.cfg.Organization, url.PathEscape(name)})
 	}
 	if e.GitRemotes != nil {
 		remotes, err := e.GitRemotes(ctx)
@@ -139,7 +149,7 @@ func (p *provider) projects(ctx context.Context, e *tool.Env) ([]project, error)
 		for _, r := range remotes {
 			// Azure DevOps treats organization names without regard to case.
 			if pr, ok := parseSSH(r); ok && strings.EqualFold(pr.org, p.cfg.Organization) {
-				seen[pr] = true
+				add(pr)
 			}
 		}
 	}
@@ -148,32 +158,55 @@ func (p *provider) projects(ctx context.Context, e *tool.Env) ([]project, error)
 		out = append(out, pr)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].org != out[j].org {
-			return out[i].org < out[j].org
+		a, b := out[i], out[j]
+		if a.org != b.org {
+			return a.org < b.org
 		}
-		return out[i].name < out[j].name
+		if a.name != b.name {
+			return a.name < b.name
+		}
+		return a.from < b.from
 	})
 	return out, nil
 }
 
-// sshPrefixes are the two spellings of an Azure DevOps ssh remote.
+// sshPrefixes are the two default spellings of an Azure DevOps ssh remote.
 var sshPrefixes = []string{"git@ssh.dev.azure.com:v3/", "ssh://git@ssh.dev.azure.com/v3/"}
+
+// sshHost is the Azure DevOps ssh host. A remote may also name an alias that
+// ends in it, such as team.ssh.dev.azure.com, which an ssh configuration
+// uses to pick a key.
+const sshHost = "ssh.dev.azure.com"
 
 // parseSSH reads the organization and project from an ssh remote such as
 // git@ssh.dev.azure.com:v3/{org}/{project}/{repo}.
 func parseSSH(remote string) (project, bool) {
-	for _, prefix := range sshPrefixes {
-		rest, ok := strings.CutPrefix(remote, prefix)
-		if !ok {
-			continue
-		}
-		parts := strings.Split(rest, "/")
-		if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+	var host, from, rest string
+	if r, ok := strings.CutPrefix(remote, "ssh://git@"); ok {
+		var path string
+		host, path, ok = strings.Cut(r, "/")
+		if rest, ok = strings.CutPrefix(path, "v3/"); !ok {
 			return project{}, false
 		}
-		return project{parts[0], parts[1]}, true
+		from = "ssh://git@" + host + "/v3/"
+	} else if r, ok := strings.CutPrefix(remote, "git@"); ok {
+		var path string
+		host, path, ok = strings.Cut(r, ":")
+		if rest, ok = strings.CutPrefix(path, "v3/"); !ok {
+			return project{}, false
+		}
+		from = "git@" + host + ":v3/"
+	} else {
+		return project{}, false
 	}
-	return project{}, false
+	if host != sshHost && !strings.HasSuffix(host, "."+sshHost) {
+		return project{}, false
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+		return project{}, false
+	}
+	return project{from, parts[0], parts[1]}, true
 }
 
 // sshRewrite makes git use HTTPS for the given projects even when a remote is
@@ -183,12 +216,12 @@ func parseSSH(remote string) (project, bool) {
 // insteadOf only replaces a fixed prefix. So there is one rewrite per project,
 // for each spelling of an ssh remote.
 func sshRewrite(projects []project) []tool.GitConfig {
-	var out []tool.GitConfig
+	out := make([]tool.GitConfig, 0, len(projects))
 	for _, pr := range projects {
-		key := "url.https://dev.azure.com/" + pr.org + "/" + pr.name + "/_git/.insteadOf"
-		for _, prefix := range sshPrefixes {
-			out = append(out, tool.GitConfig{Key: key, Value: prefix + pr.org + "/" + pr.name + "/"})
-		}
+		out = append(out, tool.GitConfig{
+			Key:   "url.https://dev.azure.com/" + pr.org + "/" + pr.name + "/_git/.insteadOf",
+			Value: pr.from + pr.org + "/" + pr.name + "/",
+		})
 	}
 	return out
 }
