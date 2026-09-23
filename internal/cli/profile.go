@@ -32,6 +32,9 @@ func newProfileCmd() *cobra.Command {
 		DisableFlagsInUseLine: true,
 		Args:                  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := requireConfig(opts); err != nil {
+				return err
+			}
 			p, err := build(context.Background(), opts, nil)
 			if err != nil {
 				return err

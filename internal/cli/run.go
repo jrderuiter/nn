@@ -32,6 +32,9 @@ func newRunCmd() *cobra.Command {
 			if len(command) == 0 {
 				return errNoCommand
 			}
+			if err := requireConfig(opts); err != nil {
+				return err
+			}
 			p, err := build(context.Background(), opts, command)
 			if err != nil {
 				return err
