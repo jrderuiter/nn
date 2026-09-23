@@ -249,7 +249,9 @@ func selectProviders(cfg *config.Config, opts options) ([]tool.Provider, error) 
 			out = append(out, p)
 		}
 	}
-	for n := range keep {
+	// Walk the flags, not the set, so the first unknown name is always the
+	// one reported.
+	for _, n := range opts.only {
 		found := false
 		for _, p := range out {
 			if p.Name() == n {
