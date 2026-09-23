@@ -55,7 +55,6 @@ type options struct {
 	// mixin leaves out the base layer and the [nono] settings, so the
 	// profile holds only what the selected tools add.
 	mixin   bool
-	skip    []string
 	workdir string
 	// skipPreflight builds the profile without checking that the tools can
 	// actually work. It lets `nn profile` show the output before fnox or a
@@ -234,12 +233,8 @@ var gitRemotes = func(ctx context.Context, dir string) ([]string, error) {
 	return urls, nil
 }
 
-// selectProviders applies the --tool and --no-tool flags on top of the
-// configured set.
+// selectProviders applies the --tool flag on top of the configured set.
 func selectProviders(cfg *config.Config, opts options) ([]tool.Provider, error) {
-	for _, name := range opts.skip {
-		delete(cfg.Tools, name)
-	}
 	providers, err := tool.Build(cfg.Meta(), cfg.Tools)
 	if err != nil {
 		return nil, err
