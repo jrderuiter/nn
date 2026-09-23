@@ -70,15 +70,6 @@ func addRunFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&showDiagnostics, "diagnostics", false, "show nono's report of the paths it blocked")
 }
 
-// splitAtDash separates nn's own arguments from the sandboxed command.
-func splitAtDash(cmd *cobra.Command, args []string) (before, after []string) {
-	d := cmd.ArgsLenAtDash()
-	if d < 0 {
-		return args, nil
-	}
-	return args[:d], args[d:]
-}
-
 // commandFor extracts the sandboxed command. Everything after -- belongs to the
 // child, so cobra must not try to parse it.
 func commandFor(cmd *cobra.Command, args []string) []string {

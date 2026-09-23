@@ -56,10 +56,6 @@ type options struct {
 	// profile holds only what the selected tools add.
 	mixin   bool
 	workdir string
-	// skipPreflight builds the profile without checking that the tools can
-	// actually work. It lets `nn profile` show the output before fnox or a
-	// cluster is set up.
-	skipPreflight bool
 }
 
 // plan is the fully resolved run, ready to write and launch.
@@ -178,6 +174,11 @@ func build(ctx context.Context, opts options, command []string) (*plan, error) {
 			return nil, err
 		}
 	}
+	if opts.mixin {
+		if err := keepArtifactGrant(m); err != nil {
+			return nil, err
+		}
+	}
 	// The raw [nono] block applies last, so a hand written rule always wins.
 	if !opts.mixin {
 		rawProfile, err := cfg.RawProfile()
@@ -198,6 +199,25 @@ func build(ctx context.Context, opts options, command []string) (*plan, error) {
 		cfg: cfg, ws: ws, profile: m.Profile(), artifacts: artifacts,
 		secrets: secretRefs, ensureDirs: ensure, extraArgs: extra, command: command,
 	}, nil
+}
+
+// keepArtifactGrant puts back the one base grant that a mixin still needs.
+//
+// A tool can point at the artifact directory without writing a file there, for
+// example GH_CONFIG_DIR, so the check reads the profile rather than the
+// artifact list. Without the grant, a profile that extends the mixin and
+// narrows workdir access cannot reach the generated kubeconfig.
+func keepArtifactGrant(m *nono.Merger) error {
+	body, err := nono.Marshal(m.Profile())
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(string(body), workspace.ProfileVar+"/") {
+		return nil
+	}
+	return m.Add(&nono.Profile{
+		Filesystem: &nono.Filesystem{Allow: []nono.CondPath{nono.P(workspace.ProfileVar)}},
+	}, "the generated files")
 }
 
 // gitConfigFragment numbers the git configuration entries of every tool in
