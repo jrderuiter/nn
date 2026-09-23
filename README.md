@@ -269,13 +269,17 @@ configuration, tests every tool, and makes sure that the profile they produce
 is valid.
 
 `nn profile` prints the profile to stdout and writes nothing. Add `--tool` once
-for each tool, and the profile holds only those tools. The base layer and the
-`[nono.profile]` block stay, so the output is the profile that the same flags
-give a run. If you name a tool that `nn.toml` does not enable, `nn` stops with
-an error.
+for each tool, and the profile holds only those tools. If you name a tool that
+`nn.toml` does not enable, `nn` stops with an error.
+
+`--as-mixin` leaves out the base layer and the `[nono]` settings. The output
+then holds only what the tools add, and another profile can extend it. A mixin
+cannot carry nono flags. If the tools add a credential route, add
+`--trust-proxy-ca` to the nono command yourself. The mixin also refers to the
+generated files, so run `nn init` first.
 
 ```
-nn profile --tool git --tool github
+nn profile --tool kubernetes --as-mixin > kubernetes.json
 ```
 
 By default `nn` hides nono's own capability table and its report of blocked
@@ -289,8 +293,8 @@ them back, named after the nono flags they control:
 
 `-v` is separate. It reports what `nn` did: the profile path, every generated
 file, the `WORKDIR` value and the exact `nono` command.
-`--dry-run` prints that command instead of running it. `--tool` and `--no-tool`
-narrow the run to some of the configured tools.
+`--dry-run` prints that command instead of running it. `--no-tool` leaves a
+configured tool out of the run.
 
 ## Generated files
 

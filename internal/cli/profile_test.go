@@ -37,9 +37,21 @@ func TestProfilePrintsTheWholeProfile(t *testing.T) {
 	}
 }
 
-// --tool narrows the profile to the named tools.
+// --tool narrows the profile, and the base layer stays.
 func TestProfileKeepsOnlyTheSelectedTools(t *testing.T) {
 	got, err := runProfile(t, "testdata/cases/all", "--tool", "git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "GIT_AUTHOR_NAME") || !strings.Contains(got, `"workdir"`) {
+		t.Errorf("the git settings or the base layer are missing:\n%s", got)
+	}
+	assertNoOtherTool(t, got)
+}
+
+// --as-mixin prints only what the tools add.
+func TestProfileAsMixinLeavesOutTheBase(t *testing.T) {
+	got, err := runProfile(t, "testdata/cases/all", "--tool", "git", "--as-mixin")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,6 +61,17 @@ func TestProfileKeepsOnlyTheSelectedTools(t *testing.T) {
 	if !strings.Contains(got, "GIT_AUTHOR_NAME") {
 		t.Errorf("the git settings are missing:\n%s", got)
 	}
+	// The base layer and the [nono] settings belong to a run, not to a mixin.
+	for _, base := range []string{`"workdir"`, `"TMPDIR"`, `"extends"`, "$WORKDIR/.nono/nn\""} {
+		if strings.Contains(got, base) {
+			t.Errorf("the mixin holds %s from the base layer:\n%s", base, got)
+		}
+	}
+	assertNoOtherTool(t, got)
+}
+
+func assertNoOtherTool(t *testing.T, got string) {
+	t.Helper()
 	for _, other := range []string{"github", "azure", "kube", "mise"} {
 		if strings.Contains(got, other) {
 			t.Errorf("the git profile holds %q from another tool:\n%s", other, got)

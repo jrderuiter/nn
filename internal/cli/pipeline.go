@@ -52,8 +52,11 @@ var baseAllowVars = []string{"PATH", "HOME", "USER", "SHELL", "TERM", "LANG", "L
 type options struct {
 	configPath string
 	only       []string
-	skip       []string
-	workdir    string
+	// mixin leaves out the base layer and the [nono] settings, so the
+	// profile holds only what the selected tools add.
+	mixin   bool
+	skip    []string
+	workdir string
 	// skipPreflight builds the profile without checking that the tools can
 	// actually work. It lets `nn profile` show the output before fnox or a
 	// cluster is set up.
@@ -148,6 +151,9 @@ func build(ctx context.Context, opts options, command []string) (*plan, error) {
 	}
 
 	base := baseProfile(cfg)
+	if opts.mixin {
+		base = &nono.Profile{Schema: nono.SchemaURL}
+	}
 	m := nono.NewMerger(base)
 	var artifacts []tool.Artifact
 	var secretRefs []tool.Secret
@@ -174,12 +180,14 @@ func build(ctx context.Context, opts options, command []string) (*plan, error) {
 		}
 	}
 	// The raw [nono] block applies last, so a hand written rule always wins.
-	rawProfile, err := cfg.RawProfile()
-	if err != nil {
-		return nil, err
-	}
-	if err := m.AddOverride(rawProfile, "the [nono.profile] block"); err != nil {
-		return nil, err
+	if !opts.mixin {
+		rawProfile, err := cfg.RawProfile()
+		if err != nil {
+			return nil, err
+		}
+		if err := m.AddOverride(rawProfile, "the [nono.profile] block"); err != nil {
+			return nil, err
+		}
 	}
 
 	if n := m.Profile().Network; n != nil && len(n.CustomCredentials) > 0 {
