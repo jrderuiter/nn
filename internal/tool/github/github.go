@@ -5,7 +5,6 @@ package github
 import (
 	"context"
 	"fmt"
-	"strconv"
 
 	"github.com/BurntSushi/toml"
 
@@ -98,8 +97,8 @@ func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error)
 			},
 		},
 		// Only what the sandbox needs from the host. The token arrives by
-		// injection and GH_CONFIG_DIR and the GIT_CONFIG_* entries are set
-		// below, so none of them needs passing through.
+		// injection, GH_CONFIG_DIR is set below, and the pipeline sets the
+		// GIT_CONFIG_* entries, so none of them needs passing through.
 		Environment: &nono.Environment{},
 	}
 
@@ -116,26 +115,25 @@ func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error)
 			EnvVar:        "GITHUB_GIT_AUTH",
 			InjectMode:    "basic_auth",
 		}
-		if *p.cfg.RewriteSSH {
-			f.Environment.SetVars = sshRewrite()
-		}
 	}
 
 	if *p.cfg.GHCLI {
 		// No filesystem grant: this sits inside the artifact directory, which
 		// the base profile already grants recursively.
-		if f.Environment.SetVars == nil {
-			f.Environment.SetVars = map[string]string{}
-		}
-		f.Environment.SetVars["GH_CONFIG_DIR"] = workspace.ProfileVar + "/gh"
+		f.Environment.SetVars = map[string]string{"GH_CONFIG_DIR": workspace.ProfileVar + "/gh"}
 	}
 
 	secrets := []tool.Secret{{EnvVar: tokenVar, Key: p.cfg.Secret}}
 	if *p.cfg.Git {
 		// The same fnox key, read once and placed under a second name.
-		secrets = append(secrets, tool.Secret{EnvVar: gitVar, Key: p.cfg.Secret})
+		// GitHub takes a token as the password for any user name.
+		secrets = append(secrets, tool.Secret{EnvVar: gitVar, Key: p.cfg.Secret, Format: "x-access-token:{}"})
 	}
-	return &tool.Result{Fragment: f, Secrets: secrets}, nil
+	r := &tool.Result{Fragment: f, Secrets: secrets}
+	if *p.cfg.Git && *p.cfg.RewriteSSH {
+		r.GitConfig = sshRewrite()
+	}
+	return r, nil
 }
 
 // sshRewrite makes git use HTTPS for github.com even when a remote is written
@@ -145,19 +143,10 @@ func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error)
 // would leave the sandbox with no way to authenticate, and the agent sees a
 // permission error on the first fetch. Both spellings of an ssh remote are
 // covered.
-//
-// This uses the GIT_CONFIG_COUNT form rather than a config file, so nothing is
-// written and the host git configuration is untouched. It needs git 2.31 or
-// newer.
-func sshRewrite() map[string]string {
-	rewrites := []struct{ from, to string }{
-		{"git@github.com:", "https://github.com/"},
-		{"ssh://git@github.com/", "https://github.com/"},
+func sshRewrite() []tool.GitConfig {
+	const key = "url.https://github.com/.insteadOf"
+	return []tool.GitConfig{
+		{Key: key, Value: "git@github.com:"},
+		{Key: key, Value: "ssh://git@github.com/"},
 	}
-	out := map[string]string{"GIT_CONFIG_COUNT": strconv.Itoa(len(rewrites))}
-	for i, r := range rewrites {
-		out["GIT_CONFIG_KEY_"+strconv.Itoa(i)] = "url." + r.to + ".insteadOf"
-		out["GIT_CONFIG_VALUE_"+strconv.Itoa(i)] = r.from
-	}
-	return out
 }

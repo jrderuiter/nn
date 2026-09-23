@@ -1,6 +1,7 @@
 [nono]
 extends = ["nolabs-ai/claude"]
 network_profile = "claude-code"
+allow_domain = ["*"]
 
 [tools.mise]
 

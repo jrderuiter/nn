@@ -4,7 +4,7 @@
 tools you declare in one file.
 
 ```
-nn -- claude
+nn run -- claude
 ```
 
 That reads `nn.toml` and turns each tool into a nono profile fragment. It merges
@@ -69,7 +69,7 @@ docker build --secret id=gh_token,env=GH_TOKEN .
 ```
 nn init
 nn doctor
-nn -- claude
+nn run -- claude
 ```
 
 `nn init` writes the example `nn.toml` when the directory has none, and then
@@ -172,6 +172,7 @@ section already carries.
 | `mise`, `go`, `node`, `bun`, `python`, `rust`, `java`, `nix` | One nono group each, plus the writable caches and environment variables that group omits |
 | `git` | A committer identity, the git configuration group, extra hosts |
 | `github` | The GitHub API, plus clone, fetch and push over HTTPS |
+| `azure_devops` | The Azure DevOps API, plus clone, fetch and push over HTTPS, for one organization |
 | `kubernetes` | One cluster, through nono's credential proxy |
 
 ### Secrets
@@ -187,6 +188,11 @@ asks at launch, which is a moment you can judge. Fetching on demand would ask
 in the middle of a session, next to whatever the agent was doing, and teach you
 to approve a secret whenever an agent asks for one.
 
+Store a token as the bare value. A git route authenticates with basic auth,
+and nono sends the stored value as the user and password pair, so `nn` adds the
+user name itself: `x-access-token` for GitHub, and an empty name for Azure
+DevOps.
+
 The Kubernetes token is different: nono mints it with `kubectl create token` and
 renews it as it expires, which needs no approval and cannot be done once at
 launch.
@@ -197,6 +203,44 @@ Create the key once with fnox, with any backend that fnox supports:
 fnox provider add op 1password --vault Engineering
 fnox set GITHUB_TOKEN --provider op
 ```
+
+### Azure DevOps
+
+The `azure_devops` tool gives the agent one organization on `dev.azure.com`.
+Git and the REST API use the same host, and both take a personal access token
+(PAT) as a basic auth password. So one proxy route covers git, the API and the
+`az devops` extension. Inside the sandbox, `AZURE_DEVOPS_EXT_PAT` holds a
+phantom token. `AZURE_CONFIG_DIR` and `AZURE_DEVOPS_CACHE_DIR` point into the
+artifact directory, because the sandbox cannot write the default locations.
+`nn` also writes the `az devops` defaults there, so a command needs no `--org`
+or `--project` flag.
+
+`nn` takes `organization` and `project` from the Azure DevOps remotes of the
+repository. There is no default. If no remote names one, or if the remotes name
+more than one, set the key in `nn.toml`, or the run stops with an error. Only
+the `az devops` defaults use `project`, so with `az_cli = false` you can leave
+it out.
+
+```toml
+[tools.azure_devops]
+secret = "AZURE_DEVOPS_PAT"
+# Only needed when the remotes do not name exactly one of each.
+organization = "my-org"
+project = "My Project"
+```
+
+The proxy can only add a credential to an HTTPS request, so `nn` rewrites ssh
+remotes to HTTPS. An ssh remote has the form
+`git@ssh.dev.azure.com:v3/{org}/{project}/{repo}`, but the HTTPS form puts
+`_git` between the project and the repository. Git can only replace a fixed
+start of a URL, so `nn` writes one rewrite per project. It takes the projects
+from the remotes of the current repository. A remote can also use a host alias
+that ends in `.ssh.dev.azure.com`, such as `team.ssh.dev.azure.com`, and `nn`
+rewrites it in that spelling. If the agent must clone a project
+that is not a remote, add it to `projects`. `nn` only rewrites the projects of
+that organization, because the token belongs to that organization.
+
+The tool does not cover the older `{org}.visualstudio.com` host.
 
 ### Kubernetes
 
@@ -258,9 +302,9 @@ block is the one exception, because it is your own last word.
 
 | Command | What it does |
 | --- | --- |
-| `nn -- <cmd>` | Generate the sandbox files and run the command |
-| `nn run -- <cmd>` | The same, spelled out for scripts |
+| `nn run -- <cmd>` | Generate the sandbox files and run the command |
 | `nn init` | Generate the sandbox files and stop |
+| `nn profile` | Print the generated profile |
 | `nn doctor` | Make sure that the configuration works |
 | `nn example` | Print a complete example `nn.toml` |
 
@@ -270,8 +314,23 @@ the project has none. `nn doctor` writes nothing, so it never creates that file.
 configuration, tests every tool, and makes sure that the profile they produce
 is valid.
 
-By default `nn` hides nono's own capability table and its report of blocked
-paths. You see the output of the command you ran. Two flags bring
+`nn profile` prints the profile to stdout and writes nothing. Add `--tool` once
+for each tool, and the profile holds only those tools. If you name a tool that
+`nn.toml` does not enable, `nn` stops with an error.
+
+`--as-mixin` leaves out the base layer and the `[nono]` settings. The output
+then holds only what the tools add, and another profile can extend it. A mixin
+cannot carry nono flags. If the tools add a credential route, add
+`--trust-proxy-ca` to the nono command yourself. If the tools use the generated
+files, the mixin keeps the grant for `.nono/nn`, and you must run `nn init`
+first.
+
+```
+nn profile --tool kubernetes --as-mixin > kubernetes.json
+```
+
+By default `nn run` hides nono's own capability table and its report of blocked
+paths. You see the output of the command you ran. Two flags of `nn run` bring
 them back, named after the nono flags they control:
 
 | nn flag | what it does | nono flag it drops |
@@ -281,8 +340,7 @@ them back, named after the nono flags they control:
 
 `-v` is separate. It reports what `nn` did: the profile path, every generated
 file, the `WORKDIR` value and the exact `nono` command.
-`--dry-run` prints that command instead of running it. `--tool` and `--no-tool`
-narrow the run to some of the configured tools.
+`--dry-run` prints that command instead of running it.
 
 ## Generated files
 
