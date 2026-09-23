@@ -293,8 +293,7 @@ them back, named after the nono flags they control:
 
 `-v` is separate. It reports what `nn` did: the profile path, every generated
 file, the `WORKDIR` value and the exact `nono` command.
-`--dry-run` prints that command instead of running it. `--no-tool` leaves a
-configured tool out of the run.
+`--dry-run` prints that command instead of running it.
 
 ## Generated files
 
