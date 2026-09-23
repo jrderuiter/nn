@@ -4,7 +4,7 @@
 tools you declare in one file.
 
 ```
-nn -- claude
+nn run -- claude
 ```
 
 That reads `nn.toml` and turns each tool into a nono profile fragment. It merges
@@ -36,7 +36,7 @@ go install github.com/jrderuiter/nn@latest
 ```
 nn example > nn.toml
 nn doctor
-nn -- claude
+nn run -- claude
 ```
 
 `nn example` prints a complete configuration with every key, the optional ones
@@ -256,8 +256,7 @@ block is the one exception, because it is your own last word.
 
 | Command | What it does |
 | --- | --- |
-| `nn -- <cmd>` | Generate the sandbox files and run the command |
-| `nn run -- <cmd>` | The same, spelled out for scripts |
+| `nn run -- <cmd>` | Generate the sandbox files and run the command |
 | `nn init` | Generate the sandbox files and stop |
 | `nn profile` | Print the generated profile |
 | `nn doctor` | Make sure that the configuration works |
@@ -283,8 +282,8 @@ first.
 nn profile --tool kubernetes --as-mixin > kubernetes.json
 ```
 
-By default `nn` hides nono's own capability table and its report of blocked
-paths. You see the output of the command you ran. Two flags bring
+By default `nn run` hides nono's own capability table and its report of blocked
+paths. You see the output of the command you ran. Two flags of `nn run` bring
 them back, named after the nono flags they control:
 
 | nn flag | what it does | nono flag it drops |
