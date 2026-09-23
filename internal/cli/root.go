@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 var opts options
@@ -50,10 +51,7 @@ that profile refers to, and runs nono with it.
 	pf := root.PersistentFlags()
 	pf.StringVar(&opts.configPath, "config", "", "path to nn.toml, skipping the upward search")
 	pf.StringVar(&opts.workdir, "workdir", "", "working directory, defaulting to the current one")
-	pf.BoolVar(&dryRun, "dry-run", false, "print the nono command instead of running it")
-	pf.BoolVarP(&verbose, "verbose", "v", false, "print the nono command and the files written")
-	pf.BoolVar(&showBanner, "banner", false, "show nono's capability table and status lines")
-	pf.BoolVar(&showDiagnostics, "diagnostics", false, "show nono's report of the paths it blocked")
+	addRunFlags(root.Flags())
 
 	// Cobra takes -v for --version unless the flag already exists, and -v is
 	// more useful as verbose.
@@ -61,6 +59,15 @@ that profile refers to, and runs nono with it.
 
 	root.AddCommand(newRunCmd(), newInitCmd(), newProfileCmd(), newDoctorCmd(), newExampleCmd())
 	return root
+}
+
+// addRunFlags adds the flags that only a run reads. They stay off the other
+// commands, where they would do nothing.
+func addRunFlags(fs *pflag.FlagSet) {
+	fs.BoolVar(&dryRun, "dry-run", false, "print the nono command instead of running it")
+	fs.BoolVarP(&verbose, "verbose", "v", false, "print the nono command and the files written")
+	fs.BoolVar(&showBanner, "banner", false, "show nono's capability table and status lines")
+	fs.BoolVar(&showDiagnostics, "diagnostics", false, "show nono's report of the paths it blocked")
 }
 
 // splitAtDash separates nn's own arguments from the sandboxed command.

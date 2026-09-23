@@ -17,9 +17,14 @@ var (
 
 func newRunCmd() *cobra.Command {
 	c := &cobra.Command{
-		Use:                   "run [flags] -- <command> [args...]",
-		Short:                 "Run a command in the sandbox",
-		Long:                  "run is the explicit form of the root command, for use in scripts.",
+		Use:   "run [flags] -- <command> [args...]",
+		Short: "Run a command in the sandbox",
+		Long: "run builds the nono profile from nn.toml, writes it and the files it\n" +
+			"refers to into .nono/nn, resolves the secrets, and runs the command\n" +
+			"inside nono. It is the same as nn -- <command>, spelled out for\n" +
+			"scripts.\n\n" +
+			"  nn run -- claude\n" +
+			"  nn run --dry-run -- claude",
 		SilenceUsage:          true,
 		DisableFlagsInUseLine: true,
 		Args:                  cobra.ArbitraryArgs,
@@ -38,6 +43,7 @@ func newRunCmd() *cobra.Command {
 			return runExec(p)
 		},
 	}
+	addRunFlags(c.Flags())
 	return c
 }
 
