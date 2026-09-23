@@ -70,6 +70,24 @@ func TestProfileAsMixinLeavesOutTheBase(t *testing.T) {
 	assertNoOtherTool(t, got)
 }
 
+// A mixin that refers to the generated files keeps the grant for them.
+func TestProfileAsMixinKeepsTheArtifactGrant(t *testing.T) {
+	got, err := runProfile(t, "testdata/cases/all", "--tool", "kubernetes", "--as-mixin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `"$WORKDIR/.nono/nn"`) {
+		t.Errorf("the kubernetes mixin has no grant for the generated files:\n%s", got)
+	}
+	gitOnly, err := runProfile(t, "testdata/cases/all", "--tool", "git", "--as-mixin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(gitOnly, `"filesystem"`) {
+		t.Errorf("the git mixin grants a directory that it never uses:\n%s", gitOnly)
+	}
+}
+
 func assertNoOtherTool(t *testing.T, got string) {
 	t.Helper()
 	for _, other := range []string{"github", "azure", "kube", "mise"} {

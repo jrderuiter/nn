@@ -275,8 +275,9 @@ for each tool, and the profile holds only those tools. If you name a tool that
 `--as-mixin` leaves out the base layer and the `[nono]` settings. The output
 then holds only what the tools add, and another profile can extend it. A mixin
 cannot carry nono flags. If the tools add a credential route, add
-`--trust-proxy-ca` to the nono command yourself. The mixin also refers to the
-generated files, so run `nn init` first.
+`--trust-proxy-ca` to the nono command yourself. If the tools use the generated
+files, the mixin keeps the grant for `.nono/nn`, and you must run `nn init`
+first.
 
 ```
 nn profile --tool kubernetes --as-mixin > kubernetes.json
