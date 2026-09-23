@@ -108,7 +108,7 @@ var testKeys = []Key{
 	{Path: "nono.network_profile"},
 	{Path: "tools.kubernetes.context"},
 	{Path: "tools.kubernetes.token_ttl"},
-	{Path: "tools.kubernetes.in_cluster", Bool: true},
+	{Path: "tools.kubernetes.allow_missing_ca", Bool: true},
 	{Path: "tools.github.secret"},
 }
 
@@ -317,39 +317,39 @@ func TestLocalFileIsNotReadWithoutAProjectFile(t *testing.T) {
 // bool before the merged configuration is decoded, or the decode fails.
 func TestEnvSetsABoolValue(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("NN_TOOLS_KUBERNETES_IN_CLUSTER", "true")
+	t.Setenv("NN_TOOLS_KUBERNETES_ALLOW_MISSING_CA", "true")
 	cfg, err := Load(Options{Dir: root, Keys: testKeys})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var k struct {
-		InCluster bool `toml:"in_cluster"`
+		AllowMissingCA bool `toml:"allow_missing_ca"`
 	}
 	md := cfg.Meta()
 	if err := md.PrimitiveDecode(cfg.Tools["kubernetes"], &k); err != nil {
 		t.Fatal(err)
 	}
-	if !k.InCluster {
+	if !k.AllowMissingCA {
 		t.Fatal("the variable must turn the setting on")
 	}
 }
 
 func TestEnvUnsetsABoolValue(t *testing.T) {
 	root := t.TempDir()
-	write(t, filepath.Join(root, "nn.toml"), "[tools.kubernetes]\nin_cluster = true\n")
-	t.Setenv("NN_TOOLS_KUBERNETES_IN_CLUSTER", "false")
+	write(t, filepath.Join(root, "nn.toml"), "[tools.kubernetes]\nallow_missing_ca = true\n")
+	t.Setenv("NN_TOOLS_KUBERNETES_ALLOW_MISSING_CA", "false")
 	cfg, err := Load(Options{Dir: root, Keys: testKeys})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var k struct {
-		InCluster bool `toml:"in_cluster"`
+		AllowMissingCA bool `toml:"allow_missing_ca"`
 	}
 	md := cfg.Meta()
 	if err := md.PrimitiveDecode(cfg.Tools["kubernetes"], &k); err != nil {
 		t.Fatal(err)
 	}
-	if k.InCluster {
+	if k.AllowMissingCA {
 		t.Fatal("a false value must turn the setting off")
 	}
 }

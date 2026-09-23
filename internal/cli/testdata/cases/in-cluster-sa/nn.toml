@@ -2,7 +2,7 @@
 extends = ["nolabs-ai/claude"]
 
 [tools.kubernetes]
-in_cluster = true
+auth = "in_cluster"
 # A relative directory is what lets a test describe a whole pod.
 service_account_dir = "sa"
 service_account = "reader"

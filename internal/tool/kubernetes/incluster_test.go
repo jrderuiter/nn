@@ -55,7 +55,7 @@ func TestReadPodIdentity(t *testing.T) {
 }
 
 // The error has to say that this is not a pod, because the likely cause is
-// in_cluster set on a laptop.
+// auth = "in_cluster" set on a laptop.
 func TestReadPodIdentityWithoutATokenSaysSo(t *testing.T) {
 	_, err := readPodIdentity(t.TempDir())
 	if err == nil {

@@ -55,9 +55,9 @@ func TestInClusterRejectsTheKeysItCannotHonour(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.key, func(t *testing.T) {
-			_, err := newFromTOML(t, "in_cluster = true\n"+c.body+"\n")
+			_, err := newFromTOML(t, "auth = \"in_cluster\"\n"+c.body+"\n")
 			if err == nil {
-				t.Fatalf("%s must not be accepted with in_cluster", c.key)
+				t.Fatalf("%s must not be accepted with auth = in_cluster", c.key)
 			}
 			if !strings.Contains(err.Error(), c.key) {
 				t.Fatalf("the error must name the key, got: %v", err)
@@ -73,25 +73,39 @@ func TestInClusterRejectsTheKeysItCannotHonour(t *testing.T) {
 // The escape the error names has to work, or one nn.toml cannot serve both a
 // laptop and a pod.
 func TestAnEmptyContextIsNotSetForTheCheck(t *testing.T) {
-	p, err := newFromTOML(t, "in_cluster = true\ncontext = \"\"\n")
+	p, err := newFromTOML(t, "auth = \"in_cluster\"\ncontext = \"\"\n")
 	if err != nil {
 		t.Fatalf("an empty context is what the pod spec sets, got: %v", err)
 	}
-	if !p.cfg.InCluster {
-		t.Fatal("in_cluster must survive")
+	if !p.cfg.inCluster() {
+		t.Fatal("the auth source must survive")
 	}
 }
 
 func TestInClusterKeysNeedInCluster(t *testing.T) {
 	for _, body := range []string{`api_server = "https://k8s.example.com"`, `service_account_dir = "sa"`} {
 		if _, err := newFromTOML(t, body+"\n"); err == nil {
-			t.Fatalf("%s must need in_cluster", body)
+			t.Fatalf("%s must need auth = in_cluster", body)
+		}
+	}
+}
+
+// A misspelled source must fail here, because the alternative is a run that
+// silently reads a kubeconfig the pod does not have.
+func TestAnUnknownAuthIsRefused(t *testing.T) {
+	_, err := newFromTOML(t, "auth = \"incluster\"\n")
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	for _, want := range []string{"incluster", "kubeconfig", "in_cluster"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the error must name %q, got: %v", want, err)
 		}
 	}
 }
 
 func TestInClusterDefaults(t *testing.T) {
-	p, err := newFromTOML(t, "in_cluster = true\n")
+	p, err := newFromTOML(t, "auth = \"in_cluster\"\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +124,7 @@ func TestInClusterDefaults(t *testing.T) {
 // Without a service account the pod's own token is used, read straight from
 // the file the kubelet rotates.
 func TestInClusterReadsTheMountedToken(t *testing.T) {
-	p, err := newFromTOML(t, "in_cluster = true\nservice_account_dir = \".\"\n")
+	p, err := newFromTOML(t, "auth = \"in_cluster\"\nservice_account_dir = \".\"\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +154,7 @@ func TestInClusterReadsTheMountedToken(t *testing.T) {
 // pod's own namespace.
 func TestServiceAccountNamespaceWinsOverTheMountedOne(t *testing.T) {
 	p, err := newFromTOML(t,
-		"in_cluster = true\nservice_account_dir = \".\"\nservice_account_namespace = \"other\"\n")
+		"auth = \"in_cluster\"\nservice_account_dir = \".\"\nservice_account_namespace = \"other\"\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +170,7 @@ func TestServiceAccountNamespaceWinsOverTheMountedOne(t *testing.T) {
 // works whether or not the pod spec happens to match it.
 func TestInClusterSkipsMintingForItsOwnAccount(t *testing.T) {
 	p, err := newFromTOML(t,
-		"in_cluster = true\nservice_account_dir = \".\"\nservice_account = \"agent\"\n")
+		"auth = \"in_cluster\"\nservice_account_dir = \".\"\nservice_account = \"agent\"\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +185,7 @@ func TestInClusterSkipsMintingForItsOwnAccount(t *testing.T) {
 
 // A different account is a narrowing, so nn mints for it from inside the pod.
 func TestInClusterMintsForADifferentAccount(t *testing.T) {
-	p, err := newFromTOML(t, "in_cluster = true\nservice_account_dir = \".\"\n"+
+	p, err := newFromTOML(t, "auth = \"in_cluster\"\nservice_account_dir = \".\"\n"+
 		"service_account = \"reader\"\nkubectl = \"/usr/local/bin/kubectl\"\n")
 	if err != nil {
 		t.Fatal(err)
@@ -209,7 +223,7 @@ func TestInClusterMintsForADifferentAccount(t *testing.T) {
 // The route verifies the API server with the authority the kubelet mounted,
 // which is why neither cluster_ca nor allow_missing_ca is ever needed.
 func TestInClusterVerifiesWithTheMountedAuthority(t *testing.T) {
-	p, err := newFromTOML(t, "in_cluster = true\nservice_account_dir = \".\"\n")
+	p, err := newFromTOML(t, "auth = \"in_cluster\"\nservice_account_dir = \".\"\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +255,7 @@ func TestInClusterVerifiesWithTheMountedAuthority(t *testing.T) {
 
 // The sandbox never sees a token, in a pod as anywhere else.
 func TestInClusterKubeconfigCarriesNoSecret(t *testing.T) {
-	p, err := newFromTOML(t, "in_cluster = true\nservice_account_dir = \".\"\n")
+	p, err := newFromTOML(t, "auth = \"in_cluster\"\nservice_account_dir = \".\"\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,9 +280,9 @@ func TestInClusterKubeconfigCarriesNoSecret(t *testing.T) {
 	}
 }
 
-// in_cluster on a machine that is not a pod has to say so plainly.
+// auth = "in_cluster" on a machine that is not a pod has to say so plainly.
 func TestInClusterOutsideAPodFails(t *testing.T) {
-	p, err := newFromTOML(t, "in_cluster = true\nservice_account_dir = \"nowhere\"\n")
+	p, err := newFromTOML(t, "auth = \"in_cluster\"\nservice_account_dir = \"nowhere\"\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +305,8 @@ func TestHostOnlyKeepsAnIPv6Address(t *testing.T) {
 	}
 }
 
-// The likely cause of an unreadable kubeconfig in a pod is in_cluster left off,
+// The likely cause of an unreadable kubeconfig in a pod is the auth key left
+// at its default,
 // so the error says that instead of naming a path nobody meant to use.
 func TestAMissingKubeconfigInAPodNamesTheSetting(t *testing.T) {
 	dir := writePodDir(t, "apps", "agent")
@@ -313,7 +328,7 @@ func TestAMissingKubeconfigInAPodNamesTheSetting(t *testing.T) {
 	if err == nil {
 		t.Fatal("want an error")
 	}
-	if !strings.Contains(err.Error(), "NN_TOOLS_KUBERNETES_IN_CLUSTER=true") {
+	if !strings.Contains(err.Error(), "NN_TOOLS_KUBERNETES_AUTH=in_cluster") {
 		t.Fatalf("the error must name the setting, got: %v", err)
 	}
 }
