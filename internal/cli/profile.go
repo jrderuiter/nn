@@ -15,7 +15,7 @@ import (
 // not written, so hand the output to nono only after nn init.
 func newProfileCmd() *cobra.Command {
 	c := &cobra.Command{
-		Use:   "profile [--tool <name>]... [--as-mixin] [-- <command>]",
+		Use:   "profile [--tool <name>]... [--as-mixin]",
 		Short: "Print the generated profile",
 		Long: "profile builds the nono profile and prints it to stdout. It writes\n" +
 			"nothing and resolves no secret.\n\n" +
@@ -23,13 +23,16 @@ func newProfileCmd() *cobra.Command {
 			"must be a tool that nn.toml enables. Without --tool, the profile holds\n" +
 			"every configured tool.\n\n" +
 			"--as-mixin leaves out the base layer and the [nono] settings, so the\n" +
-			"output holds only what the tools add, for another profile to extend.\n\n" +
+			"output holds only what the tools add, for another profile to extend.\n" +
+			"The base layer is what nn gives every run: the working directory grant\n" +
+			"and the basic environment variables, such as PATH and HOME.\n\n" +
 			"  nn profile\n" +
 			"  nn profile --tool kubernetes --as-mixin > kubernetes.json",
-		SilenceUsage: true,
-		Args:         cobra.ArbitraryArgs,
+		SilenceUsage:          true,
+		DisableFlagsInUseLine: true,
+		Args:                  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			p, err := build(context.Background(), opts, commandFor(cmd, args))
+			p, err := build(context.Background(), opts, nil)
 			if err != nil {
 				return err
 			}
@@ -41,7 +44,7 @@ func newProfileCmd() *cobra.Command {
 			return err
 		},
 	}
-	c.Flags().StringArrayVar(&opts.only, "tool", nil, "include only this tool (repeatable)")
+	c.Flags().StringArrayVar(&opts.only, "tool", nil, "include only the tool with this `name` (repeatable)")
 	c.Flags().BoolVar(&opts.mixin, "as-mixin", false, "leave out the base layer and the [nono] settings")
 	return c
 }

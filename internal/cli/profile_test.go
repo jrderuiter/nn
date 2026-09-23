@@ -26,7 +26,7 @@ func runProfile(t *testing.T, dir string, args ...string) (string, error) {
 
 // Without --tool, the command prints the profile that a run uses.
 func TestProfilePrintsTheWholeProfile(t *testing.T) {
-	got, err := runProfile(t, "testdata/cases/all", "--", "claude")
+	got, err := runProfile(t, "testdata/cases/all")
 	if err != nil {
 		t.Fatal(err)
 	}
