@@ -28,20 +28,62 @@ give it to nono yourself.
 go install github.com/jrderuiter/nn@latest
 ```
 
+A version tag such as `v0.1.0` makes CI publish a GitHub release. The release
+holds a static binary for macOS and Linux, on amd64 and arm64, and a
+`checksums.txt`. The repository is private, so a download needs a GitHub token
+with read access to its contents:
+
+```
+gh release download --repo jrderuiter/nn --pattern 'nn_linux_amd64'
+```
+
+To install `nn` in a Docker image, pass the token as a build secret. A build
+secret does not stay in any image layer.
+
+```dockerfile
+# syntax=docker/dockerfile:1
+FROM debian:bookworm-slim
+ARG NN_VERSION=v0.1.0
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates jq \
+ && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=secret,id=gh_token \
+    token="$(cat /run/secrets/gh_token)" \
+ && api="https://api.github.com/repos/jrderuiter/nn/releases/tags/${NN_VERSION}" \
+ && asset="$(curl -fsSL -H "Authorization: Bearer $token" "$api" \
+      | jq -r ".assets[] | select(.name == \"nn_linux_${TARGETARCH}\") | .url")" \
+ && curl -fsSL -H "Authorization: Bearer $token" -H "Accept: application/octet-stream" \
+      -o /usr/local/bin/nn "$asset" \
+ && chmod +x /usr/local/bin/nn
+```
+
+```
+docker build --secret id=gh_token,env=GH_TOKEN .
+```
+
 `nn` needs `nono` on the PATH. The `github` tool needs
 [fnox](https://fnox.jdx.dev), and the `kubernetes` tool needs `kubectl`.
 
 ## Getting started
 
 ```
-nn example > nn.toml
+nn init
 nn doctor
 nn run -- claude
 ```
 
-`nn example` prints a complete configuration with every key, the optional ones
-commented. Edit the file. Make sure that it works with `nn doctor`. Then run the
-agent.
+`nn init` writes the example `nn.toml` when the directory has none, and then
+generates the sandbox files from it. Every other command stops with an error
+when it finds no `nn.toml`, so `nn init` is the step that starts a project. An
+`nn.toml` that already exists is used as it is, and is never rewritten.
+
+Edit the file. Make sure that it works with `nn doctor`. Then run the agent.
+The file has every key, the optional ones commented. `nn example` prints the
+same file, so you can compare a project file against it later:
+
+```
+nn example | diff nn.toml -
+```
 
 ## Configuration
 
@@ -54,13 +96,17 @@ nothing, so the profile stays the same whatever you run.
 
 Without a `network_profile`, nono leaves egress unrestricted, so naming one
 narrows the sandbox. `minimal` grants the LLM APIs and nothing else, and it is
-what `nn example` writes. Each tool allows the hosts it needs on top of that,
+what `nn init` and `nn example` write. Each tool allows the hosts it needs on top of that,
 and `allow_domain` adds any others the project needs.
 
 `nn` reads `~/.config/nn/config.toml` first, then the nearest `nn.toml` found by
 walking up from the working directory, then the environment. Layers merge per
 key, so a project file adds to a tool that the user file declares. It does not
-replace the tool. `nn example` prints a complete file to start from:
+replace the tool. When that upward search finds no `nn.toml`, a run and
+`nn doctor` stop with an error, and `nn init` writes the example one in the
+working directory. A subdirectory of a project that already
+has one gets nothing, because a second file there would hide the file above it.
+`nn example` prints a complete file to start from:
 
 ```
 nn example > nn.toml
@@ -263,7 +309,8 @@ block is the one exception, because it is your own last word.
 | `nn example` | Print a complete example `nn.toml` |
 
 `nn init` writes exactly what a run writes, so you can read the profile, keep
-it, or give it to nono yourself. `nn doctor` writes nothing. It loads the
+it, or give it to nono yourself. `nn init` also writes the example `nn.toml` when
+the project has none. `nn doctor` writes nothing, so it never creates that file. It loads the
 configuration, tests every tool, and makes sure that the profile they produce
 is valid.
 
