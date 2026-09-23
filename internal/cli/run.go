@@ -21,8 +21,7 @@ func newRunCmd() *cobra.Command {
 		Short: "Run a command in the sandbox",
 		Long: "run builds the nono profile from nn.toml, writes it and the files it\n" +
 			"refers to into .nono/nn, resolves the secrets, and runs the command\n" +
-			"inside nono. It is the same as nn -- <command>, spelled out for\n" +
-			"scripts.\n\n" +
+			"inside nono.\n\n" +
 			"  nn run -- claude\n" +
 			"  nn run --dry-run -- claude",
 		SilenceUsage:          true,
@@ -43,7 +42,11 @@ func newRunCmd() *cobra.Command {
 			return runExec(p)
 		},
 	}
-	addRunFlags(c.Flags())
+	fs := c.Flags()
+	fs.BoolVar(&dryRun, "dry-run", false, "print the nono command instead of running it")
+	fs.BoolVarP(&verbose, "verbose", "v", false, "print the nono command and the files written")
+	fs.BoolVar(&showBanner, "banner", false, "show nono's capability table and status lines")
+	fs.BoolVar(&showDiagnostics, "diagnostics", false, "show nono's report of the paths it blocked")
 	return c
 }
 
