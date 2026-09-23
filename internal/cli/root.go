@@ -32,6 +32,7 @@ that profile refers to, and runs nono with it.
 
   nn -- claude          run claude with this project's tools
   nn init               generate the sandbox files without running anything
+  nn profile            print the generated profile
   nn doctor             check the configuration
   nn example            print a complete example nn.toml
 `),
@@ -60,7 +61,7 @@ that profile refers to, and runs nono with it.
 	// more useful as verbose.
 	root.Flags().BoolP("version", "V", false, "version for nn")
 
-	root.AddCommand(newRunCmd(), newInitCmd(), newDoctorCmd(), newExampleCmd())
+	root.AddCommand(newRunCmd(), newInitCmd(), newProfileCmd(), newDoctorCmd(), newExampleCmd())
 	return root
 }
 

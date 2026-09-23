@@ -259,6 +259,7 @@ block is the one exception, because it is your own last word.
 | `nn -- <cmd>` | Generate the sandbox files and run the command |
 | `nn run -- <cmd>` | The same, spelled out for scripts |
 | `nn init` | Generate the sandbox files and stop |
+| `nn profile` | Print the generated profile |
 | `nn doctor` | Make sure that the configuration works |
 | `nn example` | Print a complete example `nn.toml` |
 
@@ -266,6 +267,16 @@ block is the one exception, because it is your own last word.
 it, or give it to nono yourself. `nn doctor` writes nothing. It loads the
 configuration, tests every tool, and makes sure that the profile they produce
 is valid.
+
+`nn profile` prints the profile to stdout and writes nothing. Add `--tool` once
+for each tool, and the profile holds only those tools. The base layer and the
+`[nono.profile]` block stay, so the output is the profile that the same flags
+give a run. If you name a tool that `nn.toml` does not enable, `nn` stops with
+an error.
+
+```
+nn profile --tool git --tool github
+```
 
 By default `nn` hides nono's own capability table and its report of blocked
 paths. You see the output of the command you ran. Two flags bring
