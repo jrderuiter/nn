@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -48,6 +49,15 @@ type Config struct {
 	// was found. nono has no option to skip upstream verification, so this
 	// only helps when the API server uses a publicly trusted certificate.
 	AllowMissingCA bool `toml:"allow_missing_ca" help:"do not require a cluster certificate authority"`
+	// InCluster builds the access from the identity the kubelet mounted into
+	// this pod, instead of from a kubeconfig. nn never detects this on its
+	// own: a guess would make one command mean different things in different
+	// places.
+	InCluster bool `toml:"in_cluster" help:"build the access from the pod's own service account instead of a kubeconfig"`
+	// APIServer overrides the in-cluster address of the API server.
+	APIServer string `toml:"api_server" help:"in-cluster API server address, defaulting to https://kubernetes.default.svc"`
+	// ServiceAccountDir is where the pod identity is mounted.
+	ServiceAccountDir string `toml:"service_account_dir" help:"directory holding the mounted service account, for in_cluster"`
 }
 
 const routeName = "k8s"
@@ -67,6 +77,29 @@ type provider struct {
 	kubeconfig string
 	workdir    string
 	res        *resolved
+	// saDir is where a mounted service account would be. The in-cluster mode
+	// reads it; the kubeconfig mode only asks whether it is there, to tell a
+	// missing kubeconfig apart from a pod nobody configured.
+	saDir string
+	// pod is the mounted identity, set only in the in-cluster mode.
+	pod *podIdentity
+	// hostKubeconfig is the kubeconfig that the capture command uses to mint a
+	// token from inside the pod. It is empty unless the in-cluster mode mints.
+	hostKubeconfig []byte
+}
+
+// mints reports whether the token comes from `kubectl create token` rather
+// than from a file the kubelet rotates.
+func (p *provider) mints() bool {
+	if p.cfg.ServiceAccount == "" {
+		return false
+	}
+	if !p.cfg.InCluster {
+		return true
+	}
+	// Minting for the account the pod already runs as would need RBAC to gain
+	// nothing, so the mounted token stands.
+	return p.pod == nil || p.cfg.ServiceAccount != p.pod.ServiceAccount
 }
 
 func init() {
@@ -76,7 +109,10 @@ func init() {
 }
 
 func New(md toml.MetaData, prim toml.Primitive) (tool.Provider, error) {
-	cfg := Config{TokenTTL: "1h", Kubectl: "kubectl", ServiceAccountNamespace: "default"}
+	// The two mode specific keys carry no default here, so that an unset key
+	// stays distinguishable from one the user wrote. checkExclusive reads that
+	// difference, and the defaults are applied below.
+	cfg := Config{TokenTTL: "1h", Kubectl: "kubectl"}
 	if err := md.PrimitiveDecode(prim, &cfg); err != nil {
 		return nil, err
 	}
@@ -87,10 +123,73 @@ func New(md toml.MetaData, prim toml.Primitive) (tool.Provider, error) {
 	if ttl < time.Minute {
 		return nil, fmt.Errorf("token_ttl must be at least one minute, got %s", cfg.TokenTTL)
 	}
-	if cfg.ServiceAccountNamespace == "" {
+	if err := checkExclusive(&cfg); err != nil {
+		return nil, err
+	}
+	if cfg.InCluster {
+		if cfg.APIServer == "" {
+			cfg.APIServer = defaultAPIServer
+		}
+	} else if cfg.ServiceAccountNamespace == "" {
+		// In a pod the namespace comes from the mounted file instead, which
+		// resolve fills in.
 		cfg.ServiceAccountNamespace = "default"
 	}
-	return &provider{cfg: cfg, ttl: ttl}, nil
+	saDir := cfg.ServiceAccountDir
+	if saDir == "" {
+		saDir = defaultServiceAccountDir
+	}
+	return &provider{cfg: cfg, ttl: ttl, saDir: saDir}, nil
+}
+
+// checkExclusive rejects a key that cannot apply in the chosen mode.
+//
+// nn could ignore such a key instead. It does not, because a configuration that
+// names a context is a statement about which cluster the agent reaches, and
+// silently dropping it would hand the agent a different cluster than the file
+// describes.
+func checkExclusive(cfg *Config) error {
+	if !cfg.InCluster {
+		for _, k := range []struct {
+			name string
+			set  bool
+		}{
+			{"api_server", cfg.APIServer != ""},
+			{"service_account_dir", cfg.ServiceAccountDir != ""},
+		} {
+			if k.set {
+				return fmt.Errorf("%s only applies with in_cluster = true, which is off.\n"+
+					"  Turn it on, or set %s= with an empty value for this run",
+					k.name, envVarFor(k.name))
+			}
+		}
+		return nil
+	}
+	// The order is fixed so the message is the same on every run.
+	for _, k := range []struct {
+		name string
+		set  bool
+		why  string
+	}{
+		{"context", cfg.Context != "", "a pod has no kubeconfig to take a context from"},
+		{"kubeconfig", cfg.Kubeconfig != "", "the in-cluster mode reads no kubeconfig"},
+		{"cluster_ca", cfg.ClusterCA != "", "the mounted ca.crt is the cluster's own authority"},
+		{"allow_missing_ca", cfg.AllowMissingCA, "the authority is always mounted in a pod"},
+	} {
+		if !k.set {
+			continue
+		}
+		return fmt.Errorf("in_cluster is on, so %s has no meaning: %s.\n"+
+			"  Remove %s from the configuration, or set %s= with an empty value for this run",
+			k.name, k.why, k.name, envVarFor(k.name))
+	}
+	return nil
+}
+
+// envVarFor names the variable that overrides one key, which is the escape a
+// pod spec uses to drop a value that a committed nn.toml sets.
+func envVarFor(key string) string {
+	return "NN_TOOLS_KUBERNETES_" + strings.ToUpper(key)
 }
 
 func (p *provider) Name() string { return "kubernetes" }
@@ -98,6 +197,9 @@ func (p *provider) Name() string { return "kubernetes" }
 // resolve works out everything Build needs. It reads files but changes
 // nothing, so both Preflight and Build can call it.
 func (p *provider) resolve(e *tool.Env) error {
+	if p.cfg.InCluster {
+		return p.resolveInCluster(e)
+	}
 	path := p.cfg.Kubeconfig
 	switch {
 	case path == "":
@@ -108,6 +210,10 @@ func (p *provider) resolve(e *tool.Env) error {
 		path = filepath.Join(e.Workdir, path)
 	}
 	if _, err := os.Stat(path); err != nil {
+		if looksLikePod(e.Lookup, p.saDir) {
+			return fmt.Errorf("kubeconfig %s is not readable, and this looks like a pod.\n"+
+				"  Set in_cluster = true, or NN_TOOLS_KUBERNETES_IN_CLUSTER=true in the pod spec", path)
+		}
 		return fmt.Errorf("kubeconfig %s is not readable: %w", path, err)
 	}
 	kc, err := loadKubeconfig(path)
@@ -134,6 +240,54 @@ func (p *provider) resolve(e *tool.Env) error {
 	}
 	p.kubectl, err = resolveKubectl(p.cfg.Kubectl)
 	if err != nil {
+		return err
+	}
+	return p.checkCA()
+}
+
+// resolveInCluster fills the same fields the kubeconfig path fills, from the
+// identity the kubelet mounted, so that everything downstream stays the same.
+func (p *provider) resolveInCluster(e *tool.Env) error {
+	dir := p.saDir
+	if !filepath.IsAbs(dir) {
+		// A relative path means relative to the project, as it does for
+		// kubeconfig. Nothing needs it in a real pod, where the mount point is
+		// absolute, but it is what lets a test describe a whole pod identity.
+		dir = filepath.Join(e.Workdir, dir)
+	}
+	id, err := readPodIdentity(dir)
+	if err != nil {
+		return err
+	}
+	u, err := url.Parse(p.cfg.APIServer)
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("api_server %q is not a usable URL", p.cfg.APIServer)
+	}
+	ns := p.cfg.ServiceAccountNamespace
+	if ns == "" {
+		ns = id.Namespace
+	}
+	p.pod = id
+	p.workdir = e.Workdir
+	p.host = u.Host
+	// The mounted ca.crt goes in as a file path, which is a form the kubeconfig
+	// reader already understands, so caBytes and checkCA need no change.
+	p.res = &resolved{
+		ContextName: "in-cluster",
+		Cluster:     cluster{Server: p.cfg.APIServer, CertificateAuthority: id.CAFile},
+		Namespace:   ns,
+	}
+	// The namespace is also what the generated kubeconfig and any minted token
+	// use, and both read it from the configuration.
+	p.cfg.ServiceAccountNamespace = ns
+
+	if !p.mints() {
+		return p.checkCA()
+	}
+	if p.kubectl, err = resolveKubectl(p.cfg.Kubectl); err != nil {
+		return err
+	}
+	if p.hostKubeconfig, err = podKubeconfig(p.cfg.APIServer, id); err != nil {
 		return err
 	}
 	return p.checkCA()
@@ -183,28 +337,75 @@ func (p *provider) Preflight(ctx context.Context, e *tool.Env) error {
 	if err := p.resolve(e); err != nil {
 		return err
 	}
-	if p.cfg.ServiceAccount == "" {
+	if !p.cfg.InCluster && p.cfg.ServiceAccount == "" {
+		// The direct form carries the host credentials as they are. There is
+		// no command to try.
 		return nil
 	}
-	// Minting a token here turns a confusing runtime warning into a clear
+	// Running the capture here turns a confusing runtime warning into a clear
 	// message. nono runs the same command later, with the same stripped
 	// environment, so a failure now is a failure then.
+	kubeconfig := p.kubeconfig
+	if p.cfg.InCluster && p.mints() {
+		// Build finally writes this file into the artifact directory, but
+		// Preflight runs before nn writes anything, so the probe gets its own
+		// copy.
+		path, cleanup, err := writeTemp(p.hostKubeconfig)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		kubeconfig = path
+	}
+	argv := p.tokenCommand(kubeconfig)
+
 	probe, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(probe, p.tokenCommand()[0], p.tokenCommand()[1:]...)
+	cmd := exec.CommandContext(probe, argv[0], argv[1:]...)
 	cmd.Env = captureEnv()
-	if out, err := cmd.Output(); err != nil {
+	out, err := cmd.Output()
+	if err != nil {
 		var ee *exec.ExitError
 		detail := err.Error()
 		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
 			detail = strings.TrimSpace(string(ee.Stderr))
 		}
+		if !p.mints() {
+			return fmt.Errorf("cannot read the service account token with %s: %s",
+				strings.Join(argv, " "), detail)
+		}
 		return fmt.Errorf("cannot mint a token for service account %q in namespace %q: %s",
 			p.cfg.ServiceAccount, p.cfg.ServiceAccountNamespace, detail)
-	} else if len(strings.TrimSpace(string(out))) == 0 {
-		return fmt.Errorf("kubectl create token returned nothing for service account %q", p.cfg.ServiceAccount)
+	}
+	if len(strings.TrimSpace(string(out))) == 0 {
+		return fmt.Errorf("the token command %s returned nothing", strings.Join(argv, " "))
 	}
 	return nil
+}
+
+// writeTemp puts content in a private file and returns a function that removes
+// it again.
+func writeTemp(content []byte) (string, func(), error) {
+	f, err := os.CreateTemp("", "nn-kubeconfig-*")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func() { os.Remove(f.Name()) }
+	if err := f.Chmod(0o600); err != nil {
+		f.Close()
+		cleanup()
+		return "", nil, err
+	}
+	if _, err := f.Write(content); err != nil {
+		f.Close()
+		cleanup()
+		return "", nil, err
+	}
+	if err := f.Close(); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	return f.Name(), cleanup, nil
 }
 
 // resolveKubectl returns an absolute path to a real kubectl binary.
@@ -262,7 +463,7 @@ func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error)
 			return nil, err
 		}
 	}
-	if p.cfg.ServiceAccount == "" {
+	if !p.cfg.InCluster && p.cfg.ServiceAccount == "" {
 		return p.buildDirect(e)
 	}
 	return p.buildProxy(e)
@@ -283,6 +484,19 @@ func (p *provider) buildProxy(e *tool.Env) (*tool.Result, error) {
 		return nil, err
 	}
 
+	artifacts := []tool.Artifact{
+		{RelPath: "kube/config", Mode: 0o600, Content: cfgBytes},
+	}
+	// captureKubeconfig is what the token command reads on the host, which is
+	// not the file the sandbox reads.
+	captureKubeconfig := p.kubeconfig
+	if len(p.hostKubeconfig) > 0 {
+		captureKubeconfig = filepath.Join(e.ArtifactDir, "kube", "host.yaml")
+		artifacts = append(artifacts, tool.Artifact{
+			RelPath: "kube/host.yaml", Mode: 0o600, Content: p.hostKubeconfig,
+		})
+	}
+
 	route := nono.CustomCredential{
 		Upstream:      "https://" + p.host,
 		CredentialKey: "cmd://" + routeName,
@@ -290,9 +504,6 @@ func (p *provider) buildProxy(e *tool.Env) (*tool.Result, error) {
 		InjectMode:    "header",
 		InjectHeader:  "Authorization",
 		CredentialFmt: "Bearer {}",
-	}
-	artifacts := []tool.Artifact{
-		{RelPath: "kube/config", Mode: 0o600, Content: cfgBytes},
 	}
 	if len(ca) > 0 {
 		// This is the cluster's own certificate authority. It belongs to the
@@ -310,7 +521,7 @@ func (p *provider) buildProxy(e *tool.Env) (*tool.Result, error) {
 	f := &nono.Profile{
 		CredentialCapture: map[string]nono.CredentialCapture{
 			routeName: {
-				Command:      p.tokenCommand(),
+				Command:      p.tokenCommand(captureKubeconfig),
 				TimeoutSecs:  30,
 				CacheTTLSecs: p.cacheTTLSecs(),
 			},
@@ -337,9 +548,10 @@ func (p *provider) buildProxy(e *tool.Env) (*tool.Result, error) {
 		},
 	}
 
-	// The runner adds --trust-proxy-ca, because every credential route needs
-	// it. The profile deliberately states no ca_lifecycle: an explicit
-	// "session" there contradicts the flag and nono refuses to start.
+	// On macOS the runner adds --trust-proxy-ca, because a Go client reads the
+	// system trust store there. The profile deliberately states no
+	// ca_lifecycle: an explicit "session" contradicts that flag and nono
+	// refuses to start.
 	return &tool.Result{Fragment: f, Artifacts: artifacts}, nil
 }
 
@@ -383,7 +595,13 @@ func (p *provider) buildDirect(e *tool.Env) (*tool.Result, error) {
 
 // tokenCommand is the argv nono runs on the host to mint a token. It runs
 // outside the sandbox, with the user's own cluster credentials.
-func (p *provider) tokenCommand() []string {
+func (p *provider) tokenCommand(kubeconfig string) []string {
+	if p.cfg.InCluster && !p.mints() {
+		// The kubelet rotates this file in place, so re-reading it is the
+		// whole refresh mechanism. It needs no kubectl, which matters for an
+		// agent image that carries none.
+		return []string{"/bin/cat", p.pod.TokenFile}
+	}
 	bin := p.kubectl
 	if bin == "" {
 		bin = p.cfg.Kubectl
@@ -392,8 +610,8 @@ func (p *provider) tokenCommand() []string {
 	// The capture runs with a stripped environment, so a kubeconfig chosen in
 	// the configuration has to be named on the command line. Without this the
 	// command silently reads the default host kubeconfig instead.
-	if p.kubeconfig != "" {
-		args = append(args, "--kubeconfig", p.kubeconfig)
+	if kubeconfig != "" {
+		args = append(args, "--kubeconfig", kubeconfig)
 	}
 	if p.cfg.Context != "" {
 		args = append(args, "--context", p.cfg.Context)
@@ -406,6 +624,12 @@ func (p *provider) tokenCommand() []string {
 // cacheTTLSecs keeps the cached token comfortably inside its own lifetime, so
 // a cached value never outlives the token it holds.
 func (p *provider) cacheTTLSecs() int {
+	if p.cfg.InCluster && !p.mints() {
+		// token_ttl describes a token that nn asks for. The kubelet's token
+		// has a lifetime nn did not choose and cannot read, so the only safe
+		// answer is to re-read the file often. Reading a file costs nothing.
+		return 60
+	}
 	secs := int(p.ttl.Seconds() * 0.8)
 	if secs < 60 {
 		secs = 60
@@ -420,10 +644,11 @@ func (p *provider) name() string {
 	return p.res.ContextName
 }
 
+// hostOnly drops the port. api_server may name an IPv6 address, whose own
+// colons make a plain cut wrong.
 func hostOnly(hostPort string) string {
-	h, _, found := strings.Cut(hostPort, ":")
-	if !found {
-		return hostPort
+	if h, _, err := net.SplitHostPort(hostPort); err == nil {
+		return h
 	}
-	return h
+	return hostPort
 }

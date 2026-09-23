@@ -105,7 +105,7 @@ func TestProxyKubeconfigCarriesNoSecret(t *testing.T) {
 	// Verification stays on. kubectl trusts nono's interception certificate
 	// through the reusable authority in the user trust store.
 	if cl.InsecureSkipTLSVerify {
-		t.Fatal("verification must stay on; --trust-proxy-ca is what makes it work")
+		t.Fatal("verification must stay on; nono makes its own authority trusted")
 	}
 	if kc.Contexts[0].Context.Namespace != "apps" {
 		t.Fatalf("wrong namespace: %s", kc.Contexts[0].Context.Namespace)
@@ -210,7 +210,7 @@ func TestTokenCommandUsesTheResolvedBinary(t *testing.T) {
 		kubectl: "/opt/homebrew/bin/kubectl",
 		ttl:     time.Hour,
 	}
-	got := p.tokenCommand()
+	got := p.tokenCommand("")
 	want := []string{"/opt/homebrew/bin/kubectl", "--context", "prod-eks",
 		"create", "token", "ro", "-n", "apps", "--duration=1h"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
@@ -245,7 +245,7 @@ func TestServiceAccountNamespaceIsUsedForTheToken(t *testing.T) {
 		kubectl: "/opt/homebrew/bin/kubectl",
 		ttl:     time.Hour,
 	}
-	got := strings.Join(p.tokenCommand(), " ")
+	got := strings.Join(p.tokenCommand(""), " ")
 	if !strings.Contains(got, "-n agent-access") {
 		t.Fatalf("the token must be minted in the account's namespace, got %s", got)
 	}

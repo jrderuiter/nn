@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -38,10 +39,20 @@ func envKeys() []config.Key {
 		{Path: "fnox.profile"},
 	}
 	for _, k := range tool.EnvKeys() {
-		keys = append(keys, config.Key{Path: k.Path, List: k.List, Enable: k.Enable})
+		keys = append(keys, config.Key{Path: k.Path, List: k.List, Bool: k.Bool, Enable: k.Enable})
 	}
 	return keys
 }
+
+// trustsTheProxyCA says whether nono needs to be told to keep a reusable
+// interception authority in the system trust store.
+//
+// It is a macOS question. A Go client such as gh or kubectl reads the macOS
+// trust store and ignores the trust bundle variables that nono sets, so
+// without the flag it rejects an intercepted connection. Elsewhere Go reads
+// SSL_CERT_FILE, which nono already sets, and nono has no such flag to give:
+// passing it on Linux fails with "unexpected argument '--trust-proxy-ca'".
+var trustsTheProxyCA = runtime.GOOS == "darwin"
 
 // baseAllowVars is the minimal environment that every sandbox keeps. Each
 // capability adds the variables its own tools need, which is what a static
@@ -182,7 +193,7 @@ func build(ctx context.Context, opts options, command []string) (*plan, error) {
 		return nil, err
 	}
 
-	if n := m.Profile().Network; n != nil && len(n.CustomCredentials) > 0 {
+	if n := m.Profile().Network; n != nil && len(n.CustomCredentials) > 0 && trustsTheProxyCA {
 		extra = append(extra, "--trust-proxy-ca")
 	}
 	extra = dedupe(extra)

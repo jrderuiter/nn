@@ -143,9 +143,12 @@ func TestAllowDomainFromTheConfiguration(t *testing.T) {
 	}
 }
 
-// A credential route means nono intercepts TLS, and a Go client reads the
-// macOS trust store rather than the variables nono sets. Without the flag such
-// a client cannot verify the connection.
+// A credential route means nono intercepts TLS, and a Go client on macOS reads
+// the system trust store rather than the variables nono sets. Without the flag
+// such a client cannot verify the connection.
+//
+// Both branches run on any machine, because the flag is fatal on the platform
+// that does not want it: nono rejects an argument it does not define.
 func TestTrustFlagFollowsTheCredentialRoutes(t *testing.T) {
 	write := func(t *testing.T, body string) *plan {
 		t.Helper()
@@ -164,6 +167,10 @@ func TestTrustFlagFollowsTheCredentialRoutes(t *testing.T) {
 		return p
 	}
 
+	saved := trustsTheProxyCA
+	t.Cleanup(func() { trustsTheProxyCA = saved })
+
+	trustsTheProxyCA = true
 	withRoute := strings.Join(write(t, "[tools.github]\n").runArgs(), " ")
 	if !strings.Contains(withRoute, "--trust-proxy-ca") {
 		t.Errorf("a run with a credential route needs the flag: %s", withRoute)
@@ -172,5 +179,13 @@ func TestTrustFlagFollowsTheCredentialRoutes(t *testing.T) {
 	noRoute := strings.Join(write(t, "[tools.mise]\n").runArgs(), " ")
 	if strings.Contains(noRoute, "--trust-proxy-ca") {
 		t.Errorf("a run with no route must not ask to change the trust store: %s", noRoute)
+	}
+
+	// Where Go reads the trust bundle variables that nono sets, the flag is
+	// not merely unnecessary. nono does not define it, and refuses to start.
+	trustsTheProxyCA = false
+	elsewhere := strings.Join(write(t, "[tools.github]\n").runArgs(), " ")
+	if strings.Contains(elsewhere, "--trust-proxy-ca") {
+		t.Errorf("the flag must not be passed where nono has no such argument: %s", elsewhere)
 	}
 }

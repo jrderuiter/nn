@@ -1,0 +1,66 @@
+{
+  "$schema": "https://nono.sh/schemas/nono-profile.schema.json",
+  "extends": [
+    "nolabs-ai/claude"
+  ],
+  "filesystem": {
+    "allow": [
+      "$WORKDIR/.nono/nn"
+    ]
+  },
+  "network": {
+    "allow_domain": [
+      "kubernetes.default.svc"
+    ],
+    "credentials": [
+      "k8s"
+    ],
+    "custom_credentials": {
+      "k8s": {
+        "upstream": "https://kubernetes.default.svc",
+        "credential_key": "cmd://k8s",
+        "env_var": "K8S_TOKEN",
+        "inject_mode": "header",
+        "inject_header": "Authorization",
+        "credential_format": "Bearer {}",
+        "tls_ca": "$WORKDIR/.nono/nn/kube/ca.pem"
+      }
+    }
+  },
+  "environment": {
+    "allow_vars": [
+      "PATH",
+      "HOME",
+      "USER",
+      "SHELL",
+      "TERM",
+      "LANG",
+      "LC_*",
+      "TMPDIR"
+    ],
+    "set_vars": {
+      "KUBECACHEDIR": "$WORKDIR/.nono/nn/kube/cache",
+      "KUBECONFIG": "$WORKDIR/.nono/nn/kube/config"
+    }
+  },
+  "workdir": {
+    "access": "readwrite"
+  },
+  "credential_capture": {
+    "k8s": {
+      "command": [
+        "/usr/local/bin/kubectl",
+        "--kubeconfig",
+        "/TESTDIR/.nono/nn/kube/host.yaml",
+        "create",
+        "token",
+        "reader",
+        "-n",
+        "apps",
+        "--duration=1h"
+      ],
+      "timeout_secs": 30,
+      "cache_ttl_secs": 2880
+    }
+  }
+}
