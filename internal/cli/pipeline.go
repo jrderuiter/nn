@@ -546,4 +546,4 @@ func expandHostPath(in, workdir string) string {
 	return out
 }
 
-var errNoCommand = errors.New("no command given; use nn -- <command> [args...]")
+var errNoCommand = errors.New("no command given; use nn run -- <command> [args...]")

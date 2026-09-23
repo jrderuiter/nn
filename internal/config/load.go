@@ -48,7 +48,7 @@ func Load(o Options) (*Config, error) {
 	applyEnv(merged, o.Keys)
 
 	if len(merged) == 0 {
-		// No configuration at all is a valid state: `nn -- claude` with
+		// No configuration at all is a valid state: `nn run -- claude` with
 		// defaults only.
 		return &Config{sources: files}, nil
 	}
