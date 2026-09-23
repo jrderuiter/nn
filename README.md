@@ -28,6 +28,39 @@ give it to nono yourself.
 go install github.com/jrderuiter/nn@latest
 ```
 
+A version tag such as `v0.1.0` makes CI publish a GitHub release. The release
+holds a static binary for macOS and Linux, on amd64 and arm64, and a
+`checksums.txt`. The repository is private, so a download needs a GitHub token
+with read access to its contents:
+
+```
+gh release download --repo jrderuiter/nn --pattern 'nn_linux_amd64'
+```
+
+To install `nn` in a Docker image, pass the token as a build secret. A build
+secret does not stay in any image layer.
+
+```dockerfile
+# syntax=docker/dockerfile:1
+FROM debian:bookworm-slim
+ARG NN_VERSION=v0.1.0
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates jq \
+ && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=secret,id=gh_token \
+    token="$(cat /run/secrets/gh_token)" \
+ && api="https://api.github.com/repos/jrderuiter/nn/releases/tags/${NN_VERSION}" \
+ && asset="$(curl -fsSL -H "Authorization: Bearer $token" "$api" \
+      | jq -r ".assets[] | select(.name == \"nn_linux_${TARGETARCH}\") | .url")" \
+ && curl -fsSL -H "Authorization: Bearer $token" -H "Accept: application/octet-stream" \
+      -o /usr/local/bin/nn "$asset" \
+ && chmod +x /usr/local/bin/nn
+```
+
+```
+docker build --secret id=gh_token,env=GH_TOKEN .
+```
+
 `nn` needs `nono` on the PATH. The `github` tool needs
 [fnox](https://fnox.jdx.dev), and the `kubernetes` tool needs `kubectl`.
 
