@@ -15,15 +15,17 @@ import (
 // not written, so hand the output to nono only after nn init.
 func newProfileCmd() *cobra.Command {
 	c := &cobra.Command{
-		Use:   "profile [--tool <name>]... [-- <command>]",
+		Use:   "profile [--tool <name>]... [--as-mixin] [-- <command>]",
 		Short: "Print the generated profile",
 		Long: "profile builds the nono profile and prints it to stdout. It writes\n" +
 			"nothing and resolves no secret.\n\n" +
 			"Pass --tool once for each tool to include only those tools. Every name\n" +
 			"must be a tool that nn.toml enables. Without --tool, the profile holds\n" +
-			"every configured tool, the same as a run.\n\n" +
+			"every configured tool.\n\n" +
+			"--as-mixin leaves out the base layer and the [nono] settings, so the\n" +
+			"output holds only what the tools add, for another profile to extend.\n\n" +
 			"  nn profile\n" +
-			"  nn profile --tool git --tool github",
+			"  nn profile --tool kubernetes --as-mixin > kubernetes.json",
 		SilenceUsage: true,
 		Args:         cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -39,5 +41,7 @@ func newProfileCmd() *cobra.Command {
 			return err
 		},
 	}
+	c.Flags().StringArrayVar(&opts.only, "tool", nil, "include only this tool (repeatable)")
+	c.Flags().BoolVar(&opts.mixin, "as-mixin", false, "leave out the base layer and the [nono] settings")
 	return c
 }
