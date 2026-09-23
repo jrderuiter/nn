@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 	"github.com/jrderuiter/nn/internal/workspace"
 
 	// Providers register themselves.
+	_ "github.com/jrderuiter/nn/internal/tool/azuredevops"
 	_ "github.com/jrderuiter/nn/internal/tool/git"
 	_ "github.com/jrderuiter/nn/internal/tool/github"
 	_ "github.com/jrderuiter/nn/internal/tool/kubernetes"
@@ -50,12 +52,10 @@ var baseAllowVars = []string{"PATH", "HOME", "USER", "SHELL", "TERM", "LANG", "L
 type options struct {
 	configPath string
 	only       []string
-	skip       []string
-	workdir    string
-	// skipPreflight builds the profile without checking that the tools can
-	// actually work. It lets `nn profile` show the output before fnox or a
-	// cluster is set up.
-	skipPreflight bool
+	// mixin leaves out the base layer and the [nono] settings, so the
+	// profile holds only what the selected tools add.
+	mixin   bool
+	workdir string
 }
 
 // plan is the fully resolved run, ready to write and launch.
@@ -120,6 +120,9 @@ func prepare(opts options) (*prep, error) {
 			HomeDir:     home,
 			Secrets:     secrets.NewResolver(cfg.Fnox.Binary, cfg.Fnox.Config, cfg.Fnox.Profile),
 			Lookup:      os.LookupEnv,
+			GitRemotes: func(ctx context.Context) ([]string, error) {
+				return gitRemotes(ctx, ws.Workdir)
+			},
 		},
 		providers: providers,
 	}, nil
@@ -143,11 +146,16 @@ func build(ctx context.Context, opts options, command []string) (*plan, error) {
 	}
 
 	base := baseProfile(cfg)
+	if opts.mixin {
+		base = &nono.Profile{Schema: nono.SchemaURL}
+	}
 	m := nono.NewMerger(base)
 	var artifacts []tool.Artifact
 	var secretRefs []tool.Secret
 	var ensure []string
 	var extra []string
+	var gitCfg []tool.GitConfig
+	var gitCfgFrom []string
 	for i, r := range results {
 		if err := m.Add(r.Fragment, providers[i].Name()); err != nil {
 			return nil, err
@@ -156,14 +164,30 @@ func build(ctx context.Context, opts options, command []string) (*plan, error) {
 		secretRefs = append(secretRefs, r.Secrets...)
 		ensure = append(ensure, r.EnsureDirs...)
 		extra = append(extra, r.NonoArgs...)
+		if len(r.GitConfig) > 0 {
+			gitCfg = append(gitCfg, r.GitConfig...)
+			gitCfgFrom = append(gitCfgFrom, providers[i].Name())
+		}
+	}
+	if len(gitCfg) > 0 {
+		if err := m.Add(gitConfigFragment(gitCfg), strings.Join(gitCfgFrom, ", ")); err != nil {
+			return nil, err
+		}
+	}
+	if opts.mixin {
+		if err := keepArtifactGrant(m); err != nil {
+			return nil, err
+		}
 	}
 	// The raw [nono] block applies last, so a hand written rule always wins.
-	rawProfile, err := cfg.RawProfile()
-	if err != nil {
-		return nil, err
-	}
-	if err := m.AddOverride(rawProfile, "the [nono.profile] block"); err != nil {
-		return nil, err
+	if !opts.mixin {
+		rawProfile, err := cfg.RawProfile()
+		if err != nil {
+			return nil, err
+		}
+		if err := m.AddOverride(rawProfile, "the [nono.profile] block"); err != nil {
+			return nil, err
+		}
 	}
 
 	if n := m.Profile().Network; n != nil && len(n.CustomCredentials) > 0 {
@@ -177,12 +201,60 @@ func build(ctx context.Context, opts options, command []string) (*plan, error) {
 	}, nil
 }
 
-// selectProviders applies the --tool and --no-tool flags on top of the
-// configured set.
-func selectProviders(cfg *config.Config, opts options) ([]tool.Provider, error) {
-	for _, name := range opts.skip {
-		delete(cfg.Tools, name)
+// keepArtifactGrant puts back the one base grant that a mixin still needs.
+//
+// A tool can point at the artifact directory without writing a file there, for
+// example GH_CONFIG_DIR, so the check reads the profile rather than the
+// artifact list. Without the grant, a profile that extends the mixin and
+// narrows workdir access cannot reach the generated kubeconfig.
+func keepArtifactGrant(m *nono.Merger) error {
+	body, err := nono.Marshal(m.Profile())
+	if err != nil {
+		return err
 	}
+	if !strings.Contains(string(body), workspace.ProfileVar+"/") {
+		return nil
+	}
+	return m.Add(&nono.Profile{
+		Filesystem: &nono.Filesystem{Allow: []nono.CondPath{nono.P(workspace.ProfileVar)}},
+	}, "the generated files")
+}
+
+// gitConfigFragment numbers the git configuration entries of every tool in
+// one list. It uses the GIT_CONFIG_COUNT form rather than a config file, so
+// nothing is written and the host git configuration is untouched. That form
+// needs git 2.31 or newer.
+func gitConfigFragment(entries []tool.GitConfig) *nono.Profile {
+	vars := map[string]string{"GIT_CONFIG_COUNT": strconv.Itoa(len(entries))}
+	for i, e := range entries {
+		vars["GIT_CONFIG_KEY_"+strconv.Itoa(i)] = e.Key
+		vars["GIT_CONFIG_VALUE_"+strconv.Itoa(i)] = e.Value
+	}
+	return &nono.Profile{Environment: &nono.Environment{SetVars: vars}}
+}
+
+// gitRemotes lists the remote URLs of the repository in dir. It asks git
+// rather than reading .git/config, because git also follows worktrees and
+// included files. A missing git or a directory that is not a repository is not
+// an error: the tools that use remotes then have nothing to derive.
+var gitRemotes = func(ctx context.Context, dir string) ([]string, error) {
+	cmd := exec.CommandContext(ctx, "git", "config", "--get-regexp", `^remote\..*\.url$`)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, nil
+	}
+	var urls []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if _, url, ok := strings.Cut(line, " "); ok {
+			urls = append(urls, url)
+		}
+	}
+	return urls, nil
+}
+
+// selectProviders applies the --tool flag on top of the configured set.
+func selectProviders(cfg *config.Config, opts options) ([]tool.Provider, error) {
 	providers, err := tool.Build(cfg.Meta(), cfg.Tools)
 	if err != nil {
 		return nil, err
@@ -200,7 +272,9 @@ func selectProviders(cfg *config.Config, opts options) ([]tool.Provider, error) 
 			out = append(out, p)
 		}
 	}
-	for n := range keep {
+	// Walk the flags, not the set, so the first unknown name is always the
+	// one reported.
+	for _, n := range opts.only {
 		found := false
 		for _, p := range out {
 			if p.Name() == n {
@@ -331,6 +405,9 @@ func (p *plan) resolveSecrets(ctx context.Context) ([]string, error) {
 				return nil, err
 			}
 			byKey[s.Key] = value
+		}
+		if s.Format != "" {
+			value = strings.ReplaceAll(s.Format, "{}", value)
 		}
 		out = append(out, s.EnvVar+"="+value)
 	}
@@ -469,4 +546,4 @@ func expandHostPath(in, workdir string) string {
 	return out
 }
 
-var errNoCommand = errors.New("no command given; use nn -- <command> [args...]")
+var errNoCommand = errors.New("no command given; use nn run -- <command> [args...]")
