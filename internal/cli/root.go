@@ -49,7 +49,6 @@ that profile refers to, and runs nono with it.
 
 	pf := root.PersistentFlags()
 	pf.StringVar(&opts.configPath, "config", "", "path to nn.toml, skipping the upward search")
-	pf.StringArrayVar(&opts.only, "tool", nil, "use only this tool (repeatable)")
 	pf.StringArrayVar(&opts.skip, "no-tool", nil, "skip this tool (repeatable)")
 	pf.StringVar(&opts.workdir, "workdir", "", "working directory, defaulting to the current one")
 	pf.BoolVar(&dryRun, "dry-run", false, "print the nono command instead of running it")
