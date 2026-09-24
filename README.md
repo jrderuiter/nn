@@ -172,6 +172,10 @@ the tools, and no agent pack. To run a command in the sandbox of an agent, name
 the agent with `--agent`. If no section has that name, `nn` stops with an
 error. A misspelled name would otherwise start the command without its pack.
 
+If a known agent (`claude`, `codex` or `agy`) has no section, `nn` prints a
+warning and runs it with the shared profile. A project that still has the
+pack in `[nono]` `extends` then works as before.
+
 ```
 nn run -- agy
 nn run -- kubectl cluster-info
