@@ -11,10 +11,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -392,7 +394,10 @@ func (p *provider) buildDirect(e *tool.Env) (*tool.Result, error) {
 	var caPath string
 	artifacts := []tool.Artifact{}
 	if len(ca) > 0 {
-		caPath = kubeDir + "/ca.pem"
+		// kubectl reads this path, not nono, so it cannot use the $WORKDIR
+		// spelling of the profile. kubectl resolves a relative path against
+		// the directory of the kubeconfig, which is where ca.pem lands.
+		caPath = "ca.pem"
 		artifacts = append(artifacts, tool.Artifact{RelPath: "kube/ca.pem", Mode: 0o644, Content: ca})
 	}
 	cfgBytes, err := directKubeconfig(p.name(), p.res, caPath)
@@ -401,8 +406,16 @@ func (p *provider) buildDirect(e *tool.Env) (*tool.Result, error) {
 	}
 	artifacts = append(artifacts, tool.Artifact{RelPath: "kube/config", Mode: 0o600, Content: cfgBytes})
 
+	network := &nono.Network{AllowDomain: []nono.Domain{{Domain: hostOnly(p.host)}}}
+	if port, ok := loopbackPort(p.host); ok {
+		// Go never sends a loopback address through a proxy, so kubectl
+		// connects straight to the port, and the proxy's domain list does
+		// not apply. macOS offers no connect-only grant, so open_port also
+		// lets the sandbox listen on the port, which the cluster holds.
+		network = &nono.Network{OpenPort: []int{port}}
+	}
 	f := &nono.Profile{
-		Network: &nono.Network{AllowDomain: []nono.Domain{{Domain: hostOnly(p.host)}}},
+		Network: network,
 		Environment: &nono.Environment{
 			SetVars: map[string]string{
 				"KUBECONFIG":   kubeDir + "/config",
@@ -450,6 +463,24 @@ func (p *provider) name() string {
 		return p.cfg.Context
 	}
 	return p.res.ContextName
+}
+
+// loopbackPort returns the port of an API server on this machine, as a local
+// test cluster such as k3d runs it. A server without a port uses 443.
+func loopbackPort(hostPort string) (int, bool) {
+	host, portText, err := net.SplitHostPort(hostPort)
+	if err != nil {
+		host, portText = hostPort, "443"
+	}
+	ip := net.ParseIP(host)
+	if host != "localhost" && (ip == nil || !(ip.IsLoopback() || ip.IsUnspecified())) {
+		return 0, false
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		return 0, false
+	}
+	return port, true
 }
 
 func hostOnly(hostPort string) string {
