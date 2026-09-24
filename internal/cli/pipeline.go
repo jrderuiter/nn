@@ -211,6 +211,19 @@ func build(ctx context.Context, opts options, command []string) (*plan, error) {
 			return nil, err
 		}
 	}
+	// The agent block merges like a tool, so a clash with a tool is reported
+	// rather than decided.
+	if agent != "" {
+		agentProfile, err := cfg.AgentProfile(agent)
+		if err != nil {
+			return nil, err
+		}
+		if agentProfile != nil {
+			if err := m.Add(agentProfile, "the [agents."+agent+".profile] block"); err != nil {
+				return nil, err
+			}
+		}
+	}
 	// The raw [nono] block applies last, so a hand written rule always wins.
 	if !opts.mixin {
 		rawProfile, err := cfg.RawProfile()
