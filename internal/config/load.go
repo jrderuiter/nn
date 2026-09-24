@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -65,9 +66,25 @@ func Load(o Options) (*Config, error) {
 	if err := rejectUnknown(describe(files), md); err != nil {
 		return nil, err
 	}
+	if err := checkAgentNames(describe(files), cfg.Agents); err != nil {
+		return nil, err
+	}
 	cfg.md = md
 	cfg.sources = files
 	return cfg, nil
+}
+
+// agentNamePattern keeps an agent name safe to use in a file name, because
+// each agent gets its own profile file.
+var agentNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+func checkAgentNames(source string, agents map[string]Agent) error {
+	for name := range agents {
+		if !agentNamePattern.MatchString(name) {
+			return fmt.Errorf("%s: [agents.%s]: an agent name must be lower case letters, digits, - and _", source, name)
+		}
+	}
+	return nil
 }
 
 func configFiles(dir, explicit string) ([]string, error) {
@@ -151,12 +168,16 @@ func userConfigPath() string {
 
 // rejectUnknown fails on a key that nn does not understand. Keys under
 // [capabilities] are exempt, because each provider decodes its own sub-table
-// and validates it there.
+// and validates it there. So are the raw profile blocks, which are checked
+// against the profile types when they are decoded.
 func rejectUnknown(source string, md toml.MetaData) error {
 	var bad []string
 	for _, k := range md.Undecoded() {
 		s := k.String()
 		if strings.HasPrefix(s, "tools.") || strings.HasPrefix(s, "nono.profile.") {
+			continue
+		}
+		if len(k) > 3 && k[0] == "agents" && k[2] == "profile" {
 			continue
 		}
 		bad = append(bad, s)

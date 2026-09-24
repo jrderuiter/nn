@@ -67,6 +67,8 @@ type options struct {
 	// profile holds only what the selected tools add.
 	mixin   bool
 	workdir string
+	// agent names the [agents.<name>] section to apply, whatever the command.
+	agent string
 }
 
 // plan is the fully resolved run, ready to write and launch.
@@ -80,6 +82,9 @@ type plan struct {
 	extraArgs  []string
 	proxyPort  int
 	command    []string
+	// agent is the [agents.<name>] section that the profile applies, or an
+	// empty string when it applies none.
+	agent string
 }
 
 // prep is everything the pipeline needs before any tool runs.
@@ -151,12 +156,28 @@ func build(ctx context.Context, opts options, command []string) (*plan, error) {
 	}
 	cfg, ws, env, providers := pr.cfg, pr.ws, pr.env, pr.providers
 
+	agent, err := selectAgent(cfg, opts.agent, command)
+	if err != nil {
+		return nil, err
+	}
+	if name := missingAgentSection(cfg, opts.agent, command); name != "" {
+		fmt.Fprintf(os.Stderr, "nn: %s has no [agents.%s] section in nn.toml, so it runs without an agent pack\n", name, name)
+	}
+	// A mixin leaves out the [nono] settings, so it leaves out the agent too.
+	if opts.mixin {
+		agent = ""
+	}
+
 	results, err := buildProviders(ctx, providers, env)
 	if err != nil {
 		return nil, err
 	}
 
-	base := baseProfile(cfg)
+	section := cfg.Nono
+	if agent != "" {
+		section = section.WithAgent(cfg.Agents[agent])
+	}
+	base := baseProfile(section)
 	if opts.mixin {
 		base = &nono.Profile{Schema: nono.SchemaURL}
 	}
@@ -190,6 +211,19 @@ func build(ctx context.Context, opts options, command []string) (*plan, error) {
 			return nil, err
 		}
 	}
+	// The agent block merges like a tool, so a clash with a tool is reported
+	// rather than decided.
+	if agent != "" {
+		agentProfile, err := cfg.AgentProfile(agent)
+		if err != nil {
+			return nil, err
+		}
+		if agentProfile != nil {
+			if err := m.Add(agentProfile, "the [agents."+agent+".profile] block"); err != nil {
+				return nil, err
+			}
+		}
+	}
 	// The raw [nono] block applies last, so a hand written rule always wins.
 	if !opts.mixin {
 		rawProfile, err := cfg.RawProfile()
@@ -209,7 +243,67 @@ func build(ctx context.Context, opts options, command []string) (*plan, error) {
 	return &plan{
 		cfg: cfg, ws: ws, profile: m.Profile(), artifacts: artifacts,
 		secrets: secretRefs, ensureDirs: ensure, extraArgs: extra, command: command,
+		agent: agent,
 	}, nil
+}
+
+// selectAgent picks the [agents.<name>] section for a run. The --agent flag
+// wins. Without it, the base name of the command selects the section, so
+// ~/.local/bin/claude still finds [agents.claude]. A command with no section,
+// such as kubectl, gets the shared profile only.
+//
+// A named agent without a section is an error, because a typo would otherwise
+// start the command without its pack, and nothing would say so.
+func selectAgent(cfg *config.Config, flag string, command []string) (string, error) {
+	// `--agent -- agy` hands the separator to the flag as its value.
+	if strings.HasPrefix(flag, "-") {
+		return "", fmt.Errorf("--agent needs a name, as in --agent claude; got %q", flag)
+	}
+	if flag != "" {
+		if _, ok := cfg.Agents[flag]; !ok {
+			if len(cfg.Agents) == 0 {
+				return "", fmt.Errorf("agent %q has no [agents.%s] section; nn.toml has no agent sections", flag, flag)
+			}
+			return "", fmt.Errorf("agent %q has no [agents.%s] section in nn.toml; it has %v",
+				flag, flag, agentNames(cfg))
+		}
+		return flag, nil
+	}
+	if len(command) == 0 {
+		return "", nil
+	}
+	base := filepath.Base(command[0])
+	if _, ok := cfg.Agents[base]; ok {
+		return base, nil
+	}
+	return "", nil
+}
+
+// missingAgentSection names a known agent that runs without a section of its
+// own, or returns an empty string. It is a warning and not an error: a project
+// that still puts the pack in [nono] extends works as it did before.
+func missingAgentSection(cfg *config.Config, flag string, command []string) string {
+	if flag != "" {
+		return ""
+	}
+	name := agentName(command)
+	if name == "" {
+		return ""
+	}
+	if _, ok := cfg.Agents[name]; ok {
+		return ""
+	}
+	return name
+}
+
+// agentNames lists the agent sections that the configuration declares.
+func agentNames(cfg *config.Config) []string {
+	out := make([]string, 0, len(cfg.Agents))
+	for name := range cfg.Agents {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // keepArtifactGrant puts back the one base grant that a mixin still needs.
@@ -324,8 +418,9 @@ func buildProviders(ctx context.Context, providers []tool.Provider,
 	return results, nil
 }
 
-// baseProfile is the layer that every run starts from.
-func baseProfile(cfg *config.Config) *nono.Profile {
+// baseProfile is the layer that every run starts from. It takes the [nono]
+// section with the agent section of the run already applied.
+func baseProfile(n config.Nono) *nono.Profile {
 	p := &nono.Profile{
 		Schema:  nono.SchemaURL,
 		Workdir: &nono.Workdir{Access: "readwrite"},
@@ -339,16 +434,16 @@ func baseProfile(cfg *config.Config) *nono.Profile {
 		Environment: &nono.Environment{AllowVars: append([]string{}, baseAllowVars...)},
 	}
 
-	p.Extends = append(p.Extends, cfg.Nono.Extends...)
+	p.Extends = append(p.Extends, n.Extends...)
 
-	if cfg.Nono.NetworkProfile != "" || len(cfg.Nono.AllowDomain) != 0 {
-		p.Network = &nono.Network{NetworkProfile: cfg.Nono.NetworkProfile}
-		for _, d := range cfg.Nono.AllowDomain {
+	if n.NetworkProfile != "" || len(n.AllowDomain) != 0 {
+		p.Network = &nono.Network{NetworkProfile: n.NetworkProfile}
+		for _, d := range n.AllowDomain {
 			p.Network.AllowDomain = append(p.Network.AllowDomain, nono.Domain{Domain: d})
 		}
 	}
 
-	for _, g := range cfg.Nono.Groups {
+	for _, g := range n.Groups {
 		if p.Groups == nil {
 			p.Groups = &nono.Groups{}
 		}
@@ -372,10 +467,10 @@ func (p *plan) write() error {
 	if err != nil {
 		return err
 	}
-	if err := p.ws.Write("profile.json", body, 0o644); err != nil {
+	if err := p.ws.Write(workspace.ProfileFile(p.agent), body, 0o644); err != nil {
 		return err
 	}
-	return nono.Validate(p.ws.ProfilePath())
+	return nono.Validate(p.ws.ProfilePath(p.agent))
 }
 
 // dedupe keeps the first of each flag, so two tools asking for the same one
@@ -428,7 +523,7 @@ func (p *plan) resolveSecrets(ctx context.Context) ([]string, error) {
 // trace prints what nn built, so a failure inside nono can be reproduced by
 // hand. It goes to stderr, which keeps it out of a piped profile.
 func (p *plan) trace(args []string) {
-	fmt.Fprintf(os.Stderr, "nn: profile   %s\n", p.ws.ProfilePath())
+	fmt.Fprintf(os.Stderr, "nn: profile   %s\n", p.ws.ProfilePath(p.agent))
 	for _, a := range p.artifacts {
 		fmt.Fprintf(os.Stderr, "nn: artifact  %s\n", p.ws.Path(a.RelPath))
 	}
@@ -480,7 +575,7 @@ func (p *plan) validateOnly() error {
 // runArgs is the argv nn hands to nono.
 func (p *plan) runArgs() []string {
 	return nono.RunArgs{
-		ProfilePath: p.ws.ProfilePath(),
+		ProfilePath: p.ws.ProfilePath(p.agent),
 		Workdir:     p.ws.Workdir,
 		Extra:       p.extraArgs,
 		Command:     p.command,

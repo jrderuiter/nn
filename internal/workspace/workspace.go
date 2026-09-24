@@ -30,8 +30,19 @@ func New(workdir string) (*Workspace, error) {
 // Path resolves a path relative to the artifact directory.
 func (w *Workspace) Path(rel string) string { return filepath.Join(w.Dir, rel) }
 
+// ProfileFile is the name of the profile for an agent, relative to the
+// artifact directory. Each agent has its own file, so two agents can run in
+// the same project at the same time. A command that is no agent uses
+// profile.json.
+func ProfileFile(agent string) string {
+	if agent == "" {
+		return "profile.json"
+	}
+	return "profile-" + agent + ".json"
+}
+
 // ProfilePath is the file that nn passes to `nono run --profile`.
-func (w *Workspace) ProfilePath() string { return w.Path("profile.json") }
+func (w *Workspace) ProfilePath(agent string) string { return w.Path(ProfileFile(agent)) }
 
 // Write puts content at a path relative to the artifact directory, creating
 // parents and replacing the file atomically so a reader never sees a partial

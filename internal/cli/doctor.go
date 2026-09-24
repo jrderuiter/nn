@@ -11,6 +11,7 @@ import (
 
 	"github.com/jrderuiter/nn/internal/config"
 	"github.com/jrderuiter/nn/internal/tool"
+	"github.com/jrderuiter/nn/internal/workspace"
 )
 
 func newDoctorCmd() *cobra.Command {
@@ -18,7 +19,9 @@ func newDoctorCmd() *cobra.Command {
 		Use:   "doctor",
 		Short: "Check the configuration and everything it depends on",
 		Long: "doctor reads the configuration, tests every tool, and makes sure that the\n" +
-			"profile those tools produce is valid. It writes nothing and runs nothing.",
+			"profiles those tools produce are valid: the shared profile, and one per\n" +
+			"[agents.<name>] section. Pass --agent to check one agent only. It writes\n" +
+			"nothing and runs nothing.",
 		SilenceUsage: true,
 		Args:         cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -89,16 +92,35 @@ func doctor(ctx context.Context) error {
 		return fmt.Errorf("%d of %d tools cannot work as configured", failed, len(pr.providers))
 	}
 
-	p, err := build(ctx, opts, nil)
-	if err != nil {
-		return err
+	// Every agent section gives a profile of its own, and a broken pack in
+	// one of them must not wait until that agent first runs. --agent narrows
+	// the check to one.
+	agents := append([]string{""}, agentNames(cfg)...)
+	if opts.agent != "" {
+		agents = []string{opts.agent}
 	}
-	// The profile is checked in a scratch copy, so doctor leaves the project
-	// untouched.
-	if err := p.validateOnly(); err != nil {
-		return err
+	fmt.Println("\nprofiles")
+	invalid := 0
+	for _, agent := range agents {
+		o := opts
+		o.agent = agent
+		label := workspace.ProfileFile(agent)
+		p, err := build(ctx, o, nil)
+		if err == nil {
+			// The profile is checked in a scratch copy, so doctor leaves the
+			// project untouched.
+			err = p.validateOnly()
+		}
+		if err != nil {
+			invalid++
+			fmt.Printf("  %-22s %s\n", label, err)
+			continue
+		}
+		fmt.Printf("  %-22s valid\n", label)
 	}
-	fmt.Println("\nprofile   valid")
+	if invalid > 0 {
+		return fmt.Errorf("%d of %d profiles are not valid", invalid, len(agents))
+	}
 	return nil
 }
 

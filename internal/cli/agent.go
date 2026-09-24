@@ -4,10 +4,10 @@ import "path/filepath"
 
 // knownAgents are the commands that `nn` recognizes as an agent.
 //
-// The name is used for HERDR_AGENT only. It selects no profile and grants
-// nothing: the sandbox comes from nn.toml, so the same project gives the same
-// profile whatever command runs inside it.
+// The name is used for HERDR_AGENT only, and grants nothing. The section that
+// shapes the sandbox is [agents.<name>] in nn.toml, which selectAgent picks.
 var knownAgents = map[string]bool{
+	"agy":    true,
 	"claude": true,
 	"codex":  true,
 }
