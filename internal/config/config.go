@@ -22,6 +22,11 @@ type Config struct {
 	// Root stops the upward search for a parent nn.toml.
 	Root bool `toml:"root"`
 
+	// Agents holds one section per agent, keyed by the name of its command.
+	// A run applies the section of its agent only, so one project can run
+	// several agents, each with its own pack and hosts.
+	Agents map[string]Agent `toml:"agents"`
+
 	// Tools holds one lazily decoded sub-table per tool. Writing the section is
 	// what turns the tool on, so a runtime that needs no settings is an empty
 	// section.
@@ -50,6 +55,26 @@ type Nono struct {
 	// It applies after every tool, so a hand written rule always wins.
 	// Its keys are spelled exactly as they are in a nono profile.
 	Profile toml.Primitive `toml:"profile"`
+}
+
+// Agent is an [agents.<name>] section. It adds to the [nono] section, except
+// NetworkProfile, which replaces the one that [nono] names.
+type Agent struct {
+	Extends        []string `toml:"extends"`
+	Groups         []string `toml:"groups"`
+	AllowDomain    []string `toml:"allow_domain"`
+	NetworkProfile string   `toml:"network_profile"`
+}
+
+// WithAgent returns the [nono] section with an agent section applied.
+func (n Nono) WithAgent(a Agent) Nono {
+	n.Extends = append(append([]string{}, n.Extends...), a.Extends...)
+	n.Groups = append(append([]string{}, n.Groups...), a.Groups...)
+	n.AllowDomain = append(append([]string{}, n.AllowDomain...), a.AllowDomain...)
+	if a.NetworkProfile != "" {
+		n.NetworkProfile = a.NetworkProfile
+	}
+	return n
 }
 
 type Fnox struct {

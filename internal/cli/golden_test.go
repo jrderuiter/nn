@@ -15,6 +15,8 @@ var update = flag.Bool("update", false, "rewrite the golden files")
 
 // Each case directory under testdata/cases holds an nn.toml and whatever
 // fixtures it needs. The golden file is the profile that nn generates for it.
+// A case with [agents.<name>] sections also gets one golden file per agent,
+// named <case>.<agent>.json.
 func TestGoldenProfiles(t *testing.T) {
 	cases, err := filepath.Glob("testdata/cases/*")
 	if err != nil || len(cases) == 0 {
@@ -23,40 +25,50 @@ func TestGoldenProfiles(t *testing.T) {
 	for _, dir := range cases {
 		name := filepath.Base(dir)
 		t.Run(name, func(t *testing.T) {
-			p := buildCase(t, dir)
-			got, err := nono.Marshal(p.profile)
-			if err != nil {
-				t.Fatal(err)
-			}
-			assertProfilePathsArePortable(t, p)
-			// A credential capture command is host argv, passed through
-			// verbatim, so it may carry an absolute path. Normalize it, or the
-			// golden file would only match on one machine.
-			got = []byte(strings.ReplaceAll(string(got), p.ws.Workdir, "/TESTDIR"))
-			golden := filepath.Join("testdata/golden", name+".json")
-			if *update {
-				if err := os.WriteFile(golden, got, 0o644); err != nil {
-					t.Fatal(err)
-				}
-				return
-			}
-			want, err := os.ReadFile(golden)
-			if err != nil {
-				t.Fatalf("missing golden file; run go test ./internal/cli -update: %v", err)
-			}
-			if string(got) != string(want) {
-				t.Errorf("profile differs from %s\n--- got ---\n%s", golden, got)
+			p := buildCase(t, dir, "")
+			assertGolden(t, p, name)
+			for _, agent := range agentNames(p.cfg) {
+				assertGolden(t, buildCase(t, dir, agent), name+"."+agent)
 			}
 		})
 	}
 }
 
+func assertGolden(t *testing.T, p *plan, name string) {
+	t.Helper()
+	got, err := nono.Marshal(p.profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertProfilePathsArePortable(t, p)
+	// A credential capture command is host argv, passed through
+	// verbatim, so it may carry an absolute path. Normalize it, or the
+	// golden file would only match on one machine.
+	got = []byte(strings.ReplaceAll(string(got), p.ws.Workdir, "/TESTDIR"))
+	golden := filepath.Join("testdata/golden", name+".json")
+	if *update {
+		if err := os.WriteFile(golden, got, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	want, err := os.ReadFile(golden)
+	if err != nil {
+		t.Fatalf("missing golden file; run go test ./internal/cli -update: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("profile differs from %s\n--- got ---\n%s", golden, got)
+	}
+}
+
 // buildCase runs the pipeline against one case directory with a fixed
-// environment, so the output does not depend on the machine.
-func buildCase(t *testing.T, dir string) *plan {
+// environment, so the output does not depend on the machine. The agent names
+// the [agents.<name>] section to apply, or none when it is empty.
+func buildCase(t *testing.T, dir, agent string) *plan {
 	t.Helper()
 	setupCase(t, dir)
-	p, err := build(context.Background(), opts, []string{"claude"})
+	opts.agent = agent
+	p, err := build(context.Background(), opts, nil)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
