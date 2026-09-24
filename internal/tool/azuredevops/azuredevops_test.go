@@ -2,14 +2,12 @@ package azuredevops
 
 import (
 	"context"
-	"os"
-	"path/filepath"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/BurntSushi/toml"
 
-	"github.com/jrderuiter/nn/internal/secrets"
 	"github.com/jrderuiter/nn/internal/tool"
 )
 
@@ -35,7 +33,6 @@ func build(t *testing.T, body string, remotes ...string) *tool.Result {
 	}
 	r, err := p.Build(context.Background(), &tool.Env{
 		Workdir: "/w", ArtifactDir: "/w/.nono/nn",
-		Secrets:    secrets.NewResolver("fnox", "", ""),
 		GitRemotes: func(context.Context) ([]string, error) { return remotes, nil },
 	})
 	if err != nil {
@@ -260,15 +257,10 @@ func TestAzCLIOffWritesNoDefaults(t *testing.T) {
 	}
 }
 
-// Preflight asks fnox for the configured key, so doctor reports a PAT that
-// does not resolve before an agent sees a 401.
-func TestPreflightResolvesTheConfiguredSecret(t *testing.T) {
-	fnox := filepath.Join(t.TempDir(), "fnox")
-	script := "#!/bin/sh\nfor last; do :; done\n[ \"$last\" = ADO_PAT ] && echo pat && exit 0\necho \"no secret named $last\" >&2\nexit 1\n"
-	if err := os.WriteFile(fnox, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	env := &tool.Env{Secrets: secrets.NewResolver(fnox, "", "")}
+// Preflight asks for the configured key, so doctor reports a PAT that does
+// not resolve before an agent sees a 401.
+func TestPreflightChecksTheConfiguredSecret(t *testing.T) {
+	env := &tool.Env{Secrets: fakeSecrets{"ADO_PAT": true}}
 	for secret, ok := range map[string]bool{"ADO_PAT": true, "OTHER": false} {
 		p, err := newProvider("organization = \"o\"\nproject = \"p\"\nsecret = \"" + secret + "\"\n")
 		if err != nil {
@@ -278,4 +270,14 @@ func TestPreflightResolvesTheConfiguredSecret(t *testing.T) {
 			t.Errorf("secret %s: got %v", secret, err)
 		}
 	}
+}
+
+// fakeSecrets resolves only the keys it holds.
+type fakeSecrets map[string]bool
+
+func (f fakeSecrets) Check(_ context.Context, key string) error {
+	if !f[key] {
+		return fmt.Errorf("no secret named %s", key)
+	}
+	return nil
 }
