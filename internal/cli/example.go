@@ -134,6 +134,7 @@ func example() string {
 	p("# One Kubernetes cluster. nono mints a token on the host for a service")
 	p("# account that already exists; nn never creates accounts or RBAC.")
 	p("# [tools.kubernetes]")
+	p("# auth = \"service-account\"   # or \"host\" to copy the context credentials in")
 	p("# context = \"prod\"")
 	p("# service_account = \"agent-reader\"")
 	p("# service_account_namespace = \"agent-access\"   # default: default")

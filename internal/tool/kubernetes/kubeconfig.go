@@ -208,8 +208,7 @@ func execScript(tokenEnv string) string {
 }
 
 // directKubeconfig builds a single-context kubeconfig that carries the host
-// context's own credentials. It is the fallback when no service account is
-// configured, and it is weaker because the credential lands inside the sandbox.
+// context's own credentials. It is the form for auth = "host", and it is weaker because the credential lands inside the sandbox.
 func directKubeconfig(name string, r *resolved, caPath string) ([]byte, error) {
 	cl := r.Cluster
 	cl.CertificateAuthorityData = ""

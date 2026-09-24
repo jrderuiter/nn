@@ -250,3 +250,49 @@ func TestServiceAccountNamespaceIsUsedForTheToken(t *testing.T) {
 		t.Fatalf("the token must be minted in the account's namespace, got %s", got)
 	}
 }
+
+func newFromTOML(t *testing.T, body string) (tool.Provider, error) {
+	t.Helper()
+	var cfg struct {
+		Tools map[string]toml.Primitive `toml:"tools"`
+	}
+	md, err := toml.Decode("[tools.kubernetes]\n"+body, &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return New(md, cfg.Tools["kubernetes"])
+}
+
+// The host form puts the context credentials in the sandbox, so a missing
+// service account must never select it silently.
+func TestAuthServiceAccountNeedsAnAccount(t *testing.T) {
+	_, err := newFromTOML(t, "context = \"k3d-dev\"\n")
+	if err == nil {
+		t.Fatal("a missing service_account must be an error")
+	}
+	if !strings.Contains(err.Error(), `auth = "host"`) {
+		t.Fatalf("the error should name the host form, got: %v", err)
+	}
+}
+
+func TestAuthHostNeedsNoAccount(t *testing.T) {
+	p, err := newFromTOML(t, "auth = \"host\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.(*provider).cfg.Auth != authHost {
+		t.Fatalf("got auth %q", p.(*provider).cfg.Auth)
+	}
+}
+
+func TestAuthHostRejectsAServiceAccount(t *testing.T) {
+	if _, err := newFromTOML(t, "auth = \"host\"\nservice_account = \"ro\"\n"); err == nil {
+		t.Fatal("auth = host together with service_account must be an error")
+	}
+}
+
+func TestAuthRejectsAnUnknownValue(t *testing.T) {
+	if _, err := newFromTOML(t, "auth = \"token\"\nservice_account = \"ro\"\n"); err == nil {
+		t.Fatal("an unknown auth value must be an error")
+	}
+}
