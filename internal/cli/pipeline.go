@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -45,21 +47,29 @@ func envKeys() []config.Key {
 }
 
 // trustsTheProxyCA says whether nono needs to be told to keep a reusable
-// interception authority in the system trust store.
+// interception authority in the system trust store. An empty goos means the
+// platform nn runs on.
 //
 // It is a macOS question. A Go client such as gh or kubectl reads the macOS
 // trust store and ignores the trust bundle variables that nono sets, so
 // without the flag it rejects an intercepted connection. Elsewhere Go reads
 // SSL_CERT_FILE, which nono already sets, and nono has no such flag to give:
 // passing it on Linux fails with "unexpected argument '--trust-proxy-ca'".
-var trustsTheProxyCA = runtime.GOOS == "darwin"
+func trustsTheProxyCA(goos string) bool {
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	return goos == "darwin"
+}
 
 // baseAllowVars is the minimal environment that every sandbox keeps. Each
-// capability adds the variables its own tools need, which is what a static
+// tool adds the variables its own programs need, which is what a static
 // mixin cannot do.
 var baseAllowVars = []string{"PATH", "HOME", "USER", "SHELL", "TERM", "LANG", "LC_*", "TMPDIR"}
 
-// options are the inputs that the CLI flags provide.
+// options are the inputs of one invocation. The CLI flags fill most of them.
+// Each command gets its own copy, so nothing is shared between two runs or two
+// tests.
 type options struct {
 	configPath string
 	only       []string
@@ -69,6 +79,30 @@ type options struct {
 	workdir string
 	// agent names the [agents.<name>] section to apply, whatever the command.
 	agent string
+
+	// The flags of nn run.
+	dryRun      bool
+	verbose     bool
+	banner      bool
+	diagnostics bool
+
+	// stderr receives warnings and the trace. Nil means os.Stderr.
+	stderr io.Writer
+	// gitRemotes lists the remote URLs of the repository in a directory. Nil
+	// means ask git. A test hands in a fixture, because a case directory
+	// cannot hold a real .git directory.
+	gitRemotes func(ctx context.Context, dir string) ([]string, error)
+	// goos is the platform that decides the trust flag. Empty means this one.
+	goos string
+}
+
+// warnf writes one line to the warning stream.
+func (o options) warnf(format string, a ...any) {
+	w := o.stderr
+	if w == nil {
+		w = os.Stderr
+	}
+	fmt.Fprintf(w, "nn: "+format+"\n", a...)
 }
 
 // plan is the fully resolved run, ready to write and launch.
@@ -82,6 +116,7 @@ type plan struct {
 	extraArgs  []string
 	proxyPort  int
 	command    []string
+	opts       options
 	// agent is the [agents.<name>] section that the profile applies, or an
 	// empty string when it applies none.
 	agent string
@@ -126,6 +161,10 @@ func prepare(opts options) (*prep, error) {
 	if err != nil {
 		return nil, err
 	}
+	remotes := opts.gitRemotes
+	if remotes == nil {
+		remotes = gitRemotes
+	}
 
 	return &prep{
 		cfg: cfg,
@@ -137,7 +176,7 @@ func prepare(opts options) (*prep, error) {
 			Secrets:     secrets.NewResolver(cfg.Fnox.Binary, cfg.Fnox.Config, cfg.Fnox.Profile),
 			Lookup:      os.LookupEnv,
 			GitRemotes: func(ctx context.Context) ([]string, error) {
-				return gitRemotes(ctx, ws.Workdir)
+				return remotes(ctx, ws.Workdir)
 			},
 		},
 		providers: providers,
@@ -161,7 +200,7 @@ func build(ctx context.Context, opts options, command []string) (*plan, error) {
 		return nil, err
 	}
 	if name := missingAgentSection(cfg, opts.agent, command); name != "" {
-		fmt.Fprintf(os.Stderr, "nn: %s has no [agents.%s] section in nn.toml, so it runs without an agent pack\n", name, name)
+		opts.warnf("%s has no [agents.%s] section in nn.toml, so it runs without an agent pack", name, name)
 	}
 	// A mixin leaves out the [nono] settings, so it leaves out the agent too.
 	if opts.mixin {
@@ -235,7 +274,7 @@ func build(ctx context.Context, opts options, command []string) (*plan, error) {
 		}
 	}
 
-	if n := m.Profile().Network; n != nil && len(n.CustomCredentials) > 0 && trustsTheProxyCA {
+	if n := m.Profile().Network; n != nil && len(n.CustomCredentials) > 0 && trustsTheProxyCA(opts.goos) {
 		extra = append(extra, "--trust-proxy-ca")
 	}
 	extra = dedupe(extra)
@@ -243,7 +282,7 @@ func build(ctx context.Context, opts options, command []string) (*plan, error) {
 	return &plan{
 		cfg: cfg, ws: ws, profile: m.Profile(), artifacts: artifacts,
 		secrets: secretRefs, ensureDirs: ensure, extraArgs: extra, command: command,
-		agent: agent,
+		opts: opts, agent: agent,
 	}, nil
 }
 
@@ -342,7 +381,7 @@ func gitConfigFragment(entries []tool.GitConfig) *nono.Profile {
 // rather than reading .git/config, because git also follows worktrees and
 // included files. A missing git or a directory that is not a repository is not
 // an error: the tools that use remotes then have nothing to derive.
-var gitRemotes = func(ctx context.Context, dir string) ([]string, error) {
+func gitRemotes(ctx context.Context, dir string) ([]string, error) {
 	cmd := exec.CommandContext(ctx, "git", "config", "--get-regexp", `^remote\..*\.url$`)
 	cmd.Dir = dir
 	out, err := cmd.Output()
@@ -470,7 +509,34 @@ func (p *plan) write() error {
 	if err := p.ws.Write(workspace.ProfileFile(p.agent), body, 0o644); err != nil {
 		return err
 	}
+	removed, err := p.ws.Prune(usedEntries(p.artifacts, body))
+	if err != nil {
+		return fmt.Errorf("remove stale files: %w", err)
+	}
+	for _, name := range removed {
+		p.opts.warnf("removed %s, which no configured tool uses", p.ws.Path(name))
+	}
 	return nono.Validate(p.ws.ProfilePath(p.agent))
+}
+
+// artifactRef matches a path under the artifact directory in a profile, and
+// captures its first segment.
+var artifactRef = regexp.MustCompile(regexp.QuoteMeta(workspace.ProfileVar+"/") + `([^/"]+)`)
+
+// usedEntries names the top level entries of the artifact directory that the
+// run uses. An artifact claims its first segment. So does a path that the
+// profile names, because a tool can point a program at a directory there
+// without writing a file, as GH_CONFIG_DIR does.
+func usedEntries(artifacts []tool.Artifact, profile []byte) map[string]bool {
+	used := map[string]bool{}
+	for _, a := range artifacts {
+		first, _, _ := strings.Cut(filepath.ToSlash(a.RelPath), "/")
+		used[first] = true
+	}
+	for _, m := range artifactRef.FindAllSubmatch(profile, -1) {
+		used[string(m[1])] = true
+	}
+	return used
 }
 
 // dedupe keeps the first of each flag, so two tools asking for the same one
@@ -523,18 +589,19 @@ func (p *plan) resolveSecrets(ctx context.Context) ([]string, error) {
 // trace prints what nn built, so a failure inside nono can be reproduced by
 // hand. It goes to stderr, which keeps it out of a piped profile.
 func (p *plan) trace(args []string) {
-	fmt.Fprintf(os.Stderr, "nn: profile   %s\n", p.ws.ProfilePath(p.agent))
+	o := p.opts
+	o.warnf("profile   %s", p.ws.ProfilePath(p.agent))
 	for _, a := range p.artifacts {
-		fmt.Fprintf(os.Stderr, "nn: artifact  %s\n", p.ws.Path(a.RelPath))
+		o.warnf("artifact  %s", p.ws.Path(a.RelPath))
 	}
-	fmt.Fprintf(os.Stderr, "nn: WORKDIR   %s\n", p.ws.Workdir)
+	o.warnf("WORKDIR   %s", p.ws.Workdir)
 	for _, s := range p.secrets {
-		fmt.Fprintf(os.Stderr, "nn: secret    %s from fnox key %s\n", s.EnvVar, s.Key)
+		o.warnf("secret    %s from fnox key %s", s.EnvVar, s.Key)
 	}
 	if a := agentName(p.command); a != "" {
-		fmt.Fprintf(os.Stderr, "nn: agent     %s\n", a)
+		o.warnf("agent     %s", a)
 	}
-	fmt.Fprintf(os.Stderr, "nn: exec      nono %s\n", strings.Join(quoteArgs(args), " "))
+	o.warnf("exec      nono %s", strings.Join(quoteArgs(args), " "))
 }
 
 // quoteArgs makes the printed command safe to paste back into a shell.
@@ -579,21 +646,30 @@ func (p *plan) runArgs() []string {
 		Workdir:     p.ws.Workdir,
 		Extra:       p.extraArgs,
 		Command:     p.command,
-		Banner:      showBanner,
-		Diagnostics: showDiagnostics,
+		Banner:      p.opts.banner,
+		Diagnostics: p.opts.diagnostics,
 	}.Build()
 }
 
-// prepareOptionalDirs creates the cache and state directories that capabilities
+// prepareOptionalDirs creates the cache and state directories that tools
 // asked for, and drops the grant for any directory it cannot prepare.
 //
 // nono silently ignores a grant whose path does not exist, but it refuses to
 // start when a granted path exists and cannot be read. Dropping the grant costs
 // one cache directory; keeping it would cost the whole run.
+//
+// It runs when nn writes the profile, not when nn builds it, because creating
+// a directory is a change to the host. `nn profile` and `nn doctor` promise to
+// change nothing, so their profile can hold a grant that `nn run` drops.
 func (p *plan) prepareOptionalDirs() {
+	dropGrants(p.profile, makeOptionalDirs(p.opts, p.ensureDirs, p.ws.Workdir))
+}
+
+// makeOptionalDirs creates each directory and returns the ones it could not.
+func makeOptionalDirs(o options, dirs []string, workdir string) map[string]bool {
 	unusable := map[string]bool{}
-	for _, d := range p.ensureDirs {
-		path := expandHostPath(d, p.ws.Workdir)
+	for _, d := range dirs {
+		path := expandHostPath(d, workdir)
 		if path == "" {
 			continue
 		}
@@ -603,19 +679,24 @@ func (p *plan) prepareOptionalDirs() {
 				continue
 			}
 		}
-		fmt.Fprintf(os.Stderr, "nn: dropping the grant for %s, which is not usable: %v\n", d, err)
+		o.warnf("dropping the grant for %s, which is not usable: %v", d, err)
 		unusable[d] = true
 	}
-	if len(unusable) == 0 || p.profile.Filesystem == nil {
+	return unusable
+}
+
+// dropGrants removes the filesystem grants for the given profile paths.
+func dropGrants(profile *nono.Profile, paths map[string]bool) {
+	if len(paths) == 0 || profile.Filesystem == nil {
 		return
 	}
-	keep := p.profile.Filesystem.Allow[:0]
-	for _, c := range p.profile.Filesystem.Allow {
-		if !unusable[c.Path] {
+	keep := profile.Filesystem.Allow[:0]
+	for _, c := range profile.Filesystem.Allow {
+		if !paths[c.Path] {
 			keep = append(keep, c)
 		}
 	}
-	p.profile.Filesystem.Allow = keep
+	profile.Filesystem.Allow = keep
 }
 
 // expandHostPath resolves the profile-side variables that nn itself has to

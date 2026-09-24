@@ -69,16 +69,19 @@ A tool is one thing an agent can be given. Follow the shape of
 `internal/tool/git/git.go`.
 
 1. Create `internal/tool/<name>/<name>.go`.
-2. Declare a `Config` struct. Give every field a `toml` tag and a `help` tag.
-   The environment keys and `nn example` both come from those tags.
+2. Declare a `Config` struct. Give every field a `toml` tag and a doc comment.
+   The environment keys come from the `toml` tags.
 3. Call `tool.Register` from `init`, with a factory and a prototype function.
 4. Implement `Name`, `Preflight` and `Build`.
 5. Add the blank import to the provider block in `internal/cli/pipeline.go`.
-6. Add the name to the `order` list in `internal/tool/tool.go`, so the merged
-   profile stays byte stable.
-7. Add a golden case under `internal/cli/testdata/cases`, then run
+6. If the tool must run before others, add its name to the `order` list in
+   `internal/tool/tool.go`. A tool that is not in the list runs after the
+   listed ones, in name order, so the merged profile stays byte stable.
+7. Add the tool and every setting to `nn example` in
+   `internal/cli/example.go`. A test fails when one is missing.
+8. Add a golden case under `internal/cli/testdata/cases`, then run
    `mise run golden`.
-8. Document the tool in `README.md`.
+9. Document the tool in `README.md`.
 
 `Build` returns a fragment and its artifacts. It never invokes nono, never
 writes a file, and never resolves a secret. The pipeline does all three.

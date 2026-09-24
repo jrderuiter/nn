@@ -19,9 +19,6 @@ type Config struct {
 	// Fnox says where secrets come from.
 	Fnox Fnox `toml:"fnox"`
 
-	// Root stops the upward search for a parent nn.toml.
-	Root bool `toml:"root"`
-
 	// Agents holds one section per agent, keyed by the name of its command.
 	// A run applies the section of its agent only, so one project can run
 	// several agents, each with its own pack and hosts.

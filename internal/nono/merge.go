@@ -5,14 +5,14 @@ import (
 	"reflect"
 )
 
-// Merger folds capability fragments onto a base profile.
+// Merger folds tool fragments onto a base profile.
 //
 // nn merges only fragments that it generated itself, so a collision means two
-// capabilities disagree about the same key. That is a configuration error and
+// tools disagree about the same key. That is a configuration error and
 // the merger reports it instead of picking a winner.
 type Merger struct {
 	dst   *Profile
-	owner map[string]string // key path to the capability that set it
+	owner map[string]string // key path to the tool that set it
 	// override lets the current layer replace a value that an earlier layer
 	// set, instead of reporting a conflict. Only the user's own raw block uses
 	// it, because that block is the last word by design.
@@ -29,8 +29,9 @@ func NewMerger(base *Profile) *Merger {
 // Profile returns the merged result.
 func (m *Merger) Profile() *Profile { return m.dst }
 
-// AddOverride folds src in and lets it replace what earlier layers set. It is
-// for the user's own raw profile block, which is meant to have the last word.
+// AddOverride folds src in and lets it replace a value or a map entry that an
+// earlier layer set. Lists still only grow, as in Add. It is for the user's own
+// raw profile block, which is meant to have the last word.
 func (m *Merger) AddOverride(src *Profile, name string) error {
 	m.override = true
 	defer func() { m.override = false }()
@@ -38,7 +39,7 @@ func (m *Merger) AddOverride(src *Profile, name string) error {
 }
 
 // Add folds src into the destination. name identifies the contributing
-// capability in error messages.
+// tool in error messages.
 func (m *Merger) Add(src *Profile, name string) error {
 	if src == nil {
 		return nil
@@ -247,7 +248,7 @@ func (m *Merger) conflict(field, name string) error {
 	if !ok {
 		prev = "the base profile"
 	}
-	return fmt.Errorf("capabilities %q and %q both set %s to different values; "+
+	return fmt.Errorf("%q and %q both set %s to different values; "+
 		"give one of them a distinct name or remove the overlap", prev, name, field)
 }
 

@@ -27,8 +27,8 @@ func newExampleCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body := example()
 			if out == "" {
-				fmt.Print(body)
-				return nil
+				_, err := fmt.Fprint(cmd.OutOrStdout(), body)
+				return err
 			}
 			if _, err := os.Stat(out); err == nil {
 				return fmt.Errorf("%s already exists", out)

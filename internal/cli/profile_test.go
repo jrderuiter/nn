@@ -12,8 +12,9 @@ import (
 // runProfile runs `nn profile` against one case and returns what it printed.
 func runProfile(t *testing.T, dir string, args ...string) (string, error) {
 	t.Helper()
-	abs := setupCase(t, dir)
-	root := newRoot()
+	o := caseOptions(t, dir)
+	abs := o.workdir
+	root := newRoot(&o)
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)
@@ -30,7 +31,8 @@ func TestProfilePrintsTheWholeProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got = strings.ReplaceAll(got, opts.workdir, "/TESTDIR")
+	abs, _ := filepath.Abs("testdata/cases/all")
+	got = strings.ReplaceAll(got, abs, "/TESTDIR")
 	want := readGolden(t, "all")
 	if got != want {
 		t.Errorf("nn profile differs from the golden profile\n--- got ---\n%s", got)
