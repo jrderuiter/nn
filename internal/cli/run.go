@@ -8,14 +8,7 @@ import (
 	"github.com/jrderuiter/nn/internal/nono"
 )
 
-var (
-	dryRun          bool
-	verbose         bool
-	showBanner      bool
-	showDiagnostics bool
-)
-
-func newRunCmd() *cobra.Command {
+func newRunCmd(opts *options) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "run [flags] -- <command> [args...]",
 		Short: "Run a command in the sandbox",
@@ -32,24 +25,26 @@ func newRunCmd() *cobra.Command {
 			if len(command) == 0 {
 				return errNoCommand
 			}
-			if err := requireConfig(opts); err != nil {
+			o := *opts
+			o.stderr = cmd.ErrOrStderr()
+			if err := requireConfig(o); err != nil {
 				return err
 			}
-			p, err := build(context.Background(), opts, command)
+			p, err := build(cmd.Context(), o, command)
 			if err != nil {
 				return err
 			}
 			if err := p.write(); err != nil {
 				return err
 			}
-			return runExec(p)
+			return runExec(cmd.Context(), p, cmd.OutOrStdout())
 		},
 	}
 	fs := c.Flags()
-	fs.BoolVar(&dryRun, "dry-run", false, "print the nono command instead of running it")
-	fs.BoolVarP(&verbose, "verbose", "v", false, "print the nono command and the files written")
-	fs.BoolVar(&showBanner, "banner", false, "show nono's capability table and status lines")
-	fs.BoolVar(&showDiagnostics, "diagnostics", false, "show nono's report of the paths it blocked")
+	fs.BoolVar(&opts.dryRun, "dry-run", false, "print the nono command instead of running it")
+	fs.BoolVarP(&opts.verbose, "verbose", "v", false, "print the nono command and the files written")
+	fs.BoolVar(&opts.banner, "banner", false, "show nono's capability table and status lines")
+	fs.BoolVar(&opts.diagnostics, "diagnostics", false, "show nono's report of the paths it blocked")
 	return c
 }
 
