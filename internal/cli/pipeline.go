@@ -55,7 +55,7 @@ func envKeys() []config.Key {
 var trustsTheProxyCA = runtime.GOOS == "darwin"
 
 // baseAllowVars is the minimal environment that every sandbox keeps. Each
-// capability adds the variables its own tools need, which is what a static
+// tool adds the variables its own programs need, which is what a static
 // mixin cannot do.
 var baseAllowVars = []string{"PATH", "HOME", "USER", "SHELL", "TERM", "LANG", "LC_*", "TMPDIR"}
 
@@ -584,7 +584,7 @@ func (p *plan) runArgs() []string {
 	}.Build()
 }
 
-// prepareOptionalDirs creates the cache and state directories that capabilities
+// prepareOptionalDirs creates the cache and state directories that tools
 // asked for, and drops the grant for any directory it cannot prepare.
 //
 // nono silently ignores a grant whose path does not exist, but it refuses to

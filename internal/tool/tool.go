@@ -103,9 +103,9 @@ type Factory func(md toml.MetaData, prim toml.Primitive) (Provider, error)
 
 type entry struct {
 	factory Factory
-	// proto returns a pointer to a zero value of the capability's own
+	// proto returns a pointer to a zero value of the tool's own
 	// configuration struct, with its defaults applied. The toml tags on that
-	// struct are what `nn capability` turns into flags.
+	// struct are where the environment keys come from.
 	proto func() any
 }
 

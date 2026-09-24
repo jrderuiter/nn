@@ -25,7 +25,7 @@ func Execute() int {
 func newRoot() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "nn",
-		Short: "Run a command in a nono sandbox, built from declared capabilities",
+		Short: "Run a command in a nono sandbox, built from declared tools",
 		Long: strings.TrimSpace(`
 nn builds a nono profile from the tools declared in nn.toml, writes the files
 that profile refers to, and runs nono with it.

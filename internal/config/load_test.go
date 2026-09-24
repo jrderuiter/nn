@@ -33,7 +33,7 @@ func TestFindWalksUp(t *testing.T) {
 	}
 }
 
-// A nested repository must not inherit its parent's capabilities, because that
+// A nested repository must not inherit its parent's tools, because that
 // would silently widen the sandbox of an unrelated project.
 func TestFindStopsAtARepositoryBoundary(t *testing.T) {
 	root := t.TempDir()
