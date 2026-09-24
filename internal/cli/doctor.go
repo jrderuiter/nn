@@ -3,13 +3,11 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/spf13/cobra"
 
-	"github.com/jrderuiter/nn/internal/config"
 	"github.com/jrderuiter/nn/internal/tool"
 	"github.com/jrderuiter/nn/internal/workspace"
 )
@@ -43,20 +41,14 @@ func doctor(ctx context.Context) error {
 		fmt.Printf("  %-8s %s\n", b, path)
 	}
 
-	wd := opts.workdir
-	if wd == "" {
-		var err error
-		if wd, err = os.Getwd(); err != nil {
-			return err
-		}
-	}
 	if err := requireConfig(opts); err != nil {
 		return err
 	}
-	cfg, err := config.Load(config.Options{Dir: wd, Explicit: opts.configPath, Keys: envKeys()})
+	pr, err := prepare(opts)
 	if err != nil {
 		return err
 	}
+	cfg := pr.cfg
 
 	fmt.Println("\nconfiguration")
 	for _, s := range cfg.Sources() {
@@ -67,11 +59,6 @@ func doctor(ctx context.Context) error {
 	if len(cfg.Tools) == 0 {
 		fmt.Printf("  none configured; available: %s\n", strings.Join(tool.Known(), ", "))
 		return nil
-	}
-
-	pr, err := prepare(opts)
-	if err != nil {
-		return err
 	}
 
 	// Each tool is checked on its own, so one broken setting does not hide the
