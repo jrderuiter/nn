@@ -224,7 +224,7 @@ func TestServiceAccountNamespaceDefaults(t *testing.T) {
 	var cfg struct {
 		Tools map[string]toml.Primitive `toml:"tools"`
 	}
-	md, err := toml.Decode("[tools.kubernetes]\nservice_account = \"ro\"\n", &cfg)
+	md, err := toml.Decode("[tools.kubernetes]\nauth = \"service-account\"\nservice_account = \"ro\"\n", &cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,12 +266,23 @@ func newFromTOML(t *testing.T, body string) (tool.Provider, error) {
 // The host form puts the context credentials in the sandbox, so a missing
 // service account must never select it silently.
 func TestAuthServiceAccountNeedsAnAccount(t *testing.T) {
-	_, err := newFromTOML(t, "context = \"k3d-dev\"\n")
+	_, err := newFromTOML(t, "auth = \"service-account\"\ncontext = \"k3d-dev\"\n")
 	if err == nil {
 		t.Fatal("a missing service_account must be an error")
 	}
 	if !strings.Contains(err.Error(), `auth = "host"`) {
 		t.Fatalf("the error should name the host form, got: %v", err)
+	}
+}
+
+// auth has no default, so neither form is ever chosen by a missing key.
+func TestAuthIsRequired(t *testing.T) {
+	_, err := newFromTOML(t, "service_account = \"ro\"\n")
+	if err == nil {
+		t.Fatal("a missing auth must be an error, even with a service account")
+	}
+	if !strings.Contains(err.Error(), "auth is required") {
+		t.Fatalf("got: %v", err)
 	}
 }
 

@@ -27,10 +27,11 @@ import (
 
 // Config is the [tools.kubernetes] table.
 type Config struct {
-	// Auth picks how the sandbox authenticates. "service-account", the default,
-	// keeps every credential on the host. "host" copies the credentials of the
-	// context into the sandbox, and exists for local test clusters.
-	Auth string `toml:"auth" help:"service-account (default) mints a token on the host; host copies the context credentials into the sandbox"`
+	// Auth picks how the sandbox authenticates, and has no default.
+	// "service-account" keeps every credential on the host. "host" copies the
+	// credentials of the context into the sandbox, and exists for local test
+	// clusters.
+	Auth string `toml:"auth" help:"required: service-account mints a token on the host; host copies the context credentials into the sandbox"`
 	// Context names the kubeconfig context to use. Empty means the current one.
 	Context string `toml:"context" help:"kubeconfig context to use, defaulting to the current one"`
 	// ServiceAccount is the existing service account that nono mints a token
@@ -86,7 +87,7 @@ func init() {
 }
 
 func New(md toml.MetaData, prim toml.Primitive) (tool.Provider, error) {
-	cfg := Config{Auth: authServiceAccount, TokenTTL: "1h", Kubectl: "kubectl", ServiceAccountNamespace: "default"}
+	cfg := Config{TokenTTL: "1h", Kubectl: "kubectl", ServiceAccountNamespace: "default"}
 	if err := md.PrimitiveDecode(prim, &cfg); err != nil {
 		return nil, err
 	}
@@ -100,10 +101,13 @@ func New(md toml.MetaData, prim toml.Primitive) (tool.Provider, error) {
 	if cfg.ServiceAccountNamespace == "" {
 		cfg.ServiceAccountNamespace = "default"
 	}
-	// The weaker form is never a fallback. A missing service account would
-	// otherwise put the host credentials, often a cluster admin, into the
-	// sandbox without anyone asking for it.
+	// auth has no default, so the choice between the two forms is always
+	// written down. The weaker form puts the host credentials, often a cluster
+	// admin, into the sandbox, and must never be what a missing key means.
 	switch cfg.Auth {
+	case "":
+		return nil, fmt.Errorf("auth is required: set auth = %q to mint a token for service_account on the host, "+
+			"or auth = %q to copy the context credentials into the sandbox", authServiceAccount, authHost)
 	case authServiceAccount:
 		if cfg.ServiceAccount == "" {
 			return nil, fmt.Errorf("auth %q needs service_account; set auth = %q to copy the "+
