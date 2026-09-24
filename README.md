@@ -263,22 +263,25 @@ environment. `cluster_ca` supplies the cluster authority when the context
 carries none, and `allow_missing_ca = true` says the API server is publicly
 trusted.
 
-nono must intercept TLS to inject a header, so `nn` passes `--trust-proxy-ca`.
-nono then keeps one reusable authority in your macOS trust store. Expect a keychain
-prompt the first time. The cluster's own certificate is still verified, by nono,
-on the leg to the API server.
+nono must intercept TLS to inject a header. On macOS that needs
+`--trust-proxy-ca`, which `nn` passes for you. The cluster's own certificate is
+still verified, by nono, on the leg to the API server.
 
 ### Intercepted connections
 
 A credential route means nono intercepts TLS, so the client is served a
-certificate that nono signs. curl and other clients follow the trust bundle
-variables nono sets, but a Go client such as `gh` or `kubectl` reads the macOS
-trust store instead and rejects the connection. `nn` therefore passes
-`--trust-proxy-ca` whenever the profile has any route, and nono keeps one
+certificate that nono signs. Most clients follow the trust bundle variables
+that nono sets. On macOS a Go client such as `gh` or `kubectl` reads the system
+trust store instead and rejects the connection, so `nn` passes
+`--trust-proxy-ca` there whenever the profile has any route. nono then keeps one
 reusable authority in your trust store. Expect a keychain prompt the first time.
 
 The failure without it is misleading: `gh` reports `The token in GITHUB_TOKEN is
 invalid` for what is really a certificate it cannot verify.
+
+`nn` passes the flag on macOS only. Go reads the trust bundle variables on
+other systems, and nono defines no such argument there, so passing it would
+stop the run with `unexpected argument '--trust-proxy-ca'`.
 
 ### The escape hatch
 
