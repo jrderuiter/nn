@@ -59,6 +59,7 @@ type Network struct {
 	DenyDomain        []string                    `json:"deny_domain,omitempty"`
 	Credentials       []string                    `json:"credentials,omitempty"`
 	OpenPort          []int                       `json:"open_port,omitempty"`
+	OpenPortRange     [][2]int                    `json:"open_port_range,omitempty"`
 	ListenPort        []int                       `json:"listen_port,omitempty"`
 	NoProxy           []string                    `json:"no_proxy,omitempty"`
 	CustomCredentials map[string]CustomCredential `json:"custom_credentials,omitempty"`

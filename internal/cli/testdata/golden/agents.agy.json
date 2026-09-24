@@ -20,6 +20,12 @@
       "proxy.golang.org",
       "cloudcode-pa.googleapis.com",
       "oauth2.googleapis.com"
+    ],
+    "open_port_range": [
+      [
+        49152,
+        65535
+      ]
     ]
   },
   "environment": {

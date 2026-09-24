@@ -168,12 +168,16 @@ func userConfigPath() string {
 
 // rejectUnknown fails on a key that nn does not understand. Keys under
 // [capabilities] are exempt, because each provider decodes its own sub-table
-// and validates it there.
+// and validates it there. So are the raw profile blocks, which are checked
+// against the profile types when they are decoded.
 func rejectUnknown(source string, md toml.MetaData) error {
 	var bad []string
 	for _, k := range md.Undecoded() {
 		s := k.String()
 		if strings.HasPrefix(s, "tools.") || strings.HasPrefix(s, "nono.profile.") {
+			continue
+		}
+		if len(k) > 3 && k[0] == "agents" && k[2] == "profile" {
 			continue
 		}
 		bad = append(bad, s)

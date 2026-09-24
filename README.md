@@ -159,6 +159,9 @@ network_profile = "claude-code"
 [agents.agy]
 extends = ["nolabs-ai/antigravity"]
 allow_domain = ["cloudcode-pa.googleapis.com", "oauth2.googleapis.com"]
+
+[agents.agy.profile.network]
+open_port_range = [[49152, 65535]]
 ```
 
 `nn` compares the base name of the command with the section names, so
@@ -166,6 +169,18 @@ allow_domain = ["cloudcode-pa.googleapis.com", "oauth2.googleapis.com"]
 `extends`, `groups` and `allow_domain` to the `[nono]` section. Its
 `network_profile` replaces the one in `[nono]`. The tools and `[nono.profile]`
 apply to every agent in the same way.
+
+An `[agents.<name>.profile]` block is a raw profile fragment for one agent, in
+the same spelling as `[nono.profile]`. It merges like a tool, so a key that a
+tool sets to a different value is an error.
+
+agy starts a language server on a random local port, and has no option for a
+fixed one. macOS picks that port from 49152 to 65535, so the example opens that
+range. A port in the range lets agy connect as well as listen, so agy can also
+reach any other local service that listens there. The range keeps out the fixed
+ports of common local services, such as 5432 for Postgres and 9222 for the
+Chrome debugger. Do not use `open_port = [0]`, which opens every local port. On
+Linux, the random range is 32768 to 60999 by default.
 
 A command without a section, such as `kubectl`, gets the `[nono]` section and
 the tools, and no agent pack. To run a command in the sandbox of an agent, name

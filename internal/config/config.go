@@ -64,6 +64,9 @@ type Agent struct {
 	Groups         []string `toml:"groups"`
 	AllowDomain    []string `toml:"allow_domain"`
 	NetworkProfile string   `toml:"network_profile"`
+	// Profile is a raw profile fragment for this agent only, for a need that
+	// no other key covers, such as the local port of a language server.
+	Profile toml.Primitive `toml:"profile"`
 }
 
 // WithAgent returns the [nono] section with an agent section applied.
@@ -95,22 +98,31 @@ func (c *Config) Sources() []string { return c.sources }
 // for nono's own JSON schema. Decoding it as TOML would quietly miss every key
 // whose name differs from its Go field, such as set_vars.
 func (c *Config) RawProfile() (*nono.Profile, error) {
+	return c.decodeProfile(c.Nono.Profile, "[nono.profile]")
+}
+
+// AgentProfile decodes the [agents.<name>.profile] block in the same way.
+func (c *Config) AgentProfile(name string) (*nono.Profile, error) {
+	return c.decodeProfile(c.Agents[name].Profile, "[agents."+name+".profile]")
+}
+
+func (c *Config) decodeProfile(prim toml.Primitive, label string) (*nono.Profile, error) {
 	var raw map[string]any
-	if err := c.md.PrimitiveDecode(c.Nono.Profile, &raw); err != nil {
-		return nil, fmt.Errorf("[nono.profile]: %w", err)
+	if err := c.md.PrimitiveDecode(prim, &raw); err != nil {
+		return nil, fmt.Errorf("%s: %w", label, err)
 	}
 	if len(raw) == 0 {
 		return nil, nil
 	}
 	body, err := json.Marshal(raw)
 	if err != nil {
-		return nil, fmt.Errorf("[nono.profile]: %w", err)
+		return nil, fmt.Errorf("%s: %w", label, err)
 	}
 	var p nono.Profile
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&p); err != nil {
-		return nil, fmt.Errorf("[nono.profile]: %w", err)
+		return nil, fmt.Errorf("%s: %w", label, err)
 	}
 	return &p, nil
 }
