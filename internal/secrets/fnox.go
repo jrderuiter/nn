@@ -1,8 +1,8 @@
 // Package secrets resolves secret references through fnox.
 //
-// nn never reads a secret value itself. It emits a nono credential_capture
-// entry that runs fnox on the host when the proxy needs the credential, so the
-// value stays out of nn's memory and out of the sandbox environment.
+// nn reads each value once, at launch, and hands it to nono in the environment
+// of the nono process. The value never reaches a file or the sandbox
+// environment: the proxy gives the child a phantom token instead.
 package secrets
 
 import (

@@ -4,9 +4,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/jrderuiter/nn/internal/config"
+	"github.com/jrderuiter/nn/internal/tool"
 )
 
 // init in an empty project writes the example, and that file has to load.
@@ -107,5 +110,37 @@ func TestRequireConfigFindsTheProjectFile(t *testing.T) {
 	}
 	if err := requireConfig(options{workdir: sub}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The example is written by hand, so this test is what keeps it complete: a
+// new tool, or a new setting of one, must appear in its section.
+func TestExampleCoversEveryTool(t *testing.T) {
+	body := example()
+	section := func(name string) string {
+		head := "[tools." + name + "]"
+		i := strings.Index(body, head)
+		if i < 0 {
+			return ""
+		}
+		rest := body[i+len(head):]
+		if j := strings.Index(rest, "[tools."); j >= 0 {
+			rest = rest[:j]
+		}
+		return rest
+	}
+	for _, k := range tool.EnvKeys() {
+		name, key, _ := strings.Cut(strings.TrimPrefix(k.Path, "tools."), ".")
+		if !strings.Contains(body, "[tools."+name+"]") {
+			t.Errorf("the example has no [tools.%s] section", name)
+			continue
+		}
+		if key == "" {
+			continue
+		}
+		setting := regexp.MustCompile(`(?m)^(# )?` + regexp.QuoteMeta(key) + ` = `)
+		if !setting.MatchString(section(name)) {
+			t.Errorf("the [tools.%s] section of the example does not show %s", name, key)
+		}
 	}
 }

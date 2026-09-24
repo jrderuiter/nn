@@ -16,18 +16,18 @@ import (
 // Config is the [tools.github] table.
 type Config struct {
 	// Secret is the fnox key that holds the token.
-	Secret string `toml:"secret" help:"fnox key holding the token"`
+	Secret string `toml:"secret"`
 	// Git allows clone, fetch and push over HTTPS. It is on by default,
 	// because an agent with API access but no git access cannot do the thing
 	// it was given the repository for.
-	Git *bool `toml:"git" help:"allow clone, fetch and push over HTTPS"`
+	Git *bool `toml:"git"`
 	// RewriteSSH turns an ssh remote into its HTTPS equivalent inside the
 	// sandbox. Without it a repository cloned over ssh keeps using ssh, which
 	// carries no credential the proxy can inject, so fetch fails.
-	RewriteSSH *bool `toml:"rewrite_ssh" help:"use HTTPS for github.com remotes written as ssh"`
+	RewriteSSH *bool `toml:"rewrite_ssh"`
 	// GHCLI redirects the gh configuration directory into the project, so the
 	// agent never touches the host gh state.
-	GHCLI *bool `toml:"gh_cli" help:"redirect the gh configuration into the project"`
+	GHCLI *bool `toml:"gh_cli"`
 }
 
 type provider struct{ cfg Config }
