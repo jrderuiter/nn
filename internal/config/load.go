@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -65,9 +66,25 @@ func Load(o Options) (*Config, error) {
 	if err := rejectUnknown(describe(files), md); err != nil {
 		return nil, err
 	}
+	if err := checkAgentNames(describe(files), cfg.Agents); err != nil {
+		return nil, err
+	}
 	cfg.md = md
 	cfg.sources = files
 	return cfg, nil
+}
+
+// agentNamePattern keeps an agent name safe to use in a file name, because
+// each agent gets its own profile file.
+var agentNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+func checkAgentNames(source string, agents map[string]Agent) error {
+	for name := range agents {
+		if !agentNamePattern.MatchString(name) {
+			return fmt.Errorf("%s: [agents.%s]: an agent name must be lower case letters, digits, - and _", source, name)
+		}
+	}
+	return nil
 }
 
 func configFiles(dir, explicit string) ([]string, error) {

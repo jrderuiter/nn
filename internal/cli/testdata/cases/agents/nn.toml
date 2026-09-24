@@ -1,0 +1,16 @@
+[nono]
+extends = ["default"]
+network_profile = "minimal"
+allow_domain = ["proxy.golang.org"]
+
+[agents.claude]
+extends = ["nolabs-ai/claude"]
+network_profile = "claude-code"
+
+[agents.agy]
+extends = ["nolabs-ai/antigravity"]
+allow_domain = ["cloudcode-pa.googleapis.com", "oauth2.googleapis.com"]
+
+[tools.git]
+name = "Test User"
+email = "test@example.com"

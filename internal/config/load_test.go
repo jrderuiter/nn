@@ -240,3 +240,42 @@ func TestEnvLeavesUnsetKeysAlone(t *testing.T) {
 		t.Fatalf("got %q", cfg.Nono.NetworkProfile)
 	}
 }
+
+func TestAgentSectionsLoad(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nn.toml")
+	write(t, path, "[nono]\nextends = [\"default\"]\nnetwork_profile = \"minimal\"\n\n"+
+		"[agents.claude]\nextends = [\"nolabs-ai/claude\"]\nnetwork_profile = \"claude-code\"\n\n"+
+		"[agents.agy]\nallow_domain = [\"cloudcode-pa.googleapis.com\"]\n")
+	cfg, err := Load(Options{Dir: dir, Explicit: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claude := cfg.Nono.WithAgent(cfg.Agents["claude"])
+	if strings.Join(claude.Extends, ",") != "default,nolabs-ai/claude" || claude.NetworkProfile != "claude-code" {
+		t.Fatalf("got %+v", claude)
+	}
+	// An agent without a network profile keeps the one from [nono].
+	agy := cfg.Nono.WithAgent(cfg.Agents["agy"])
+	if agy.NetworkProfile != "minimal" || len(agy.AllowDomain) != 1 {
+		t.Fatalf("got %+v", agy)
+	}
+	// Applying a section must not change the shared one.
+	if len(cfg.Nono.Extends) != 1 || cfg.Nono.NetworkProfile != "minimal" {
+		t.Fatalf("the [nono] section changed: %+v", cfg.Nono)
+	}
+}
+
+func TestAgentSectionRejectsUnknownKeysAndBadNames(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nn.toml")
+	write(t, path, "[agents.claude]\nextend = [\"nolabs-ai/claude\"]\n")
+	if _, err := Load(Options{Dir: dir, Explicit: path}); err == nil || !strings.Contains(err.Error(), "agents.claude.extend") {
+		t.Fatalf("a misspelled key must be an error, got %v", err)
+	}
+	// The name becomes part of a file name.
+	write(t, path, "[agents.\"../x\"]\n")
+	if _, err := Load(Options{Dir: dir, Explicit: path}); err == nil {
+		t.Fatal("an agent name that is not safe in a file name must be an error")
+	}
+}

@@ -87,12 +87,13 @@ nn example | diff nn.toml -
 
 ## Configuration
 
-An agent pack is an ordinary entry in `extends`: `nn` has no separate key for
-it, because nono has no agent concept. When the command after `--` is a known
-agent (`claude` or `codex`), `nn` sets `HERDR_AGENT` to that name in the
-environment it hands to nono. The variable is not in `allow_vars`, so it stops
-at nono and never reaches the sandbox. It names the command only and grants
-nothing, so the profile stays the same whatever you run.
+An agent pack goes in an `[agents.<name>]` section, so one project can run
+several agents. The section is described under [Agents](#agents).
+
+When the command after `--` is a known agent (`claude`, `codex` or `agy`), `nn`
+sets `HERDR_AGENT` to that name in the environment it hands to nono. The
+variable is not in `allow_vars`, so it stops at nono and never reaches the
+sandbox. It names the command only and grants nothing.
 
 Without a `network_profile`, nono leaves egress unrestricted, so naming one
 narrows the sandbox. `minimal` grants the LLM APIs and nothing else, and it is
@@ -114,10 +115,13 @@ nn example > nn.toml
 
 ```toml
 [nono]
-extends = ["nolabs-ai/claude", "jr/clean_env"]
+extends = ["jr/clean_env"]
 groups  = ["unlink_protection"]
 network_profile = "minimal"
 allow_domain = ["proxy.golang.org"]
+
+[agents.claude]
+extends = ["nolabs-ai/claude"]
 
 [tools.mise]
 [tools.go]
@@ -138,6 +142,47 @@ service_account_namespace = "apps"
 A `[tools.<name>]` section turns that tool on. A runtime takes no configuration,
 so its section is empty.
 
+### Agents
+
+An `[agents.<name>]` section holds what only one agent needs: its pack, its
+hosts, and its network profile. The name is the name of the agent command.
+
+```toml
+[nono]
+network_profile = "minimal"
+
+[agents.claude]
+extends = ["nolabs-ai/claude"]
+network_profile = "claude-code"
+
+[agents.agy]
+extends = ["nolabs-ai/antigravity"]
+allow_domain = ["cloudcode-pa.googleapis.com", "oauth2.googleapis.com"]
+```
+
+`nn` compares the base name of the command with the section names, so
+`~/.local/bin/claude` selects `[agents.claude]`. The section adds its
+`extends`, `groups` and `allow_domain` to the `[nono]` section. Its
+`network_profile` replaces the one in `[nono]`. The tools and `[nono.profile]`
+apply to every agent in the same way.
+
+A command without a section, such as `kubectl`, gets the `[nono]` section and
+the tools, and no agent pack. To run a command in the sandbox of an agent, name
+the agent with `--agent`. If no section has that name, `nn` stops with an
+error. A misspelled name would otherwise start the command without its pack.
+
+```
+nn run -- agy
+nn run -- kubectl cluster-info
+nn run --agent claude -- bash
+```
+
+Keep each pack in its own section. If you put two packs in `extends`, each
+agent gets the files and credentials of the other agent.
+
+Install a pack with `nono pull` before you extend it. nono does not grant the
+hosts that agy uses in any of its network profiles, so its section adds them.
+
 ### Environment variables
 
 Every value can also come from the environment: `NN_` plus the key path in
@@ -154,7 +199,8 @@ upper case, with dots as underscores.
 | `NN_TOOLS_MISE` | turns the `mise` tool on, or off with a false value |
 
 `nn` applies the environment after both files. It matches these names against
-the keys it knows, and does not read the variable name itself.
+the keys it knows, and does not read the variable name itself. An
+`[agents.<name>]` section has no environment variables.
 `NN_NONO_NETWORK_PROFILE` is otherwise ambiguous between `nono.network_profile`
 and `nono.network.profile`.
 
@@ -306,6 +352,7 @@ block is the one exception, because it is your own last word.
 | Command | What it does |
 | --- | --- |
 | `nn run -- <cmd>` | Generate the sandbox files and run the command |
+| `nn run --agent <name> -- <cmd>` | Run the command in the sandbox of an agent |
 | `nn init` | Generate the sandbox files and stop |
 | `nn profile` | Print the generated profile |
 | `nn doctor` | Make sure that the configuration works |
@@ -314,8 +361,12 @@ block is the one exception, because it is your own last word.
 `nn init` writes exactly what a run writes, so you can read the profile, keep
 it, or give it to nono yourself. `nn init` also writes the example `nn.toml` when
 the project has none. `nn doctor` writes nothing, so it never creates that file. It loads the
-configuration, tests every tool, and makes sure that the profile they produce
-is valid.
+configuration, tests every tool, and makes sure that the profiles they produce
+are valid. It checks the shared profile and the profile of every agent, or one
+agent when you pass `--agent`.
+
+`--agent` works with every command. `nn profile --agent agy` prints the profile
+of agy, and `nn init --agent agy` writes it.
 
 `nn profile` prints the profile to stdout and writes nothing. Add `--tool` once
 for each tool, and the profile holds only those tools. If you name a tool that
@@ -351,7 +402,9 @@ Everything `nn` generates lands in `.nono/nn/` inside the project, with a
 `.gitignore` that excludes all of it:
 
 ```
-.nono/nn/profile.json     the merged nono profile
+.nono/nn/profile.json     the merged nono profile, for a command with no agent section
+.nono/nn/profile-<agent>.json
+                          the profile of one agent
 .nono/nn/kube/config      the generated kubeconfig, mode 0600
 .nono/nn/kube/ca.pem      the cluster certificate authority
 .nono/nn/gh/              the gh CLI configuration, kept away from the host

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://nono.sh/schemas/nono-profile.schema.json",
+  "extends": [
+    "default",
+    "nolabs-ai/antigravity"
+  ],
+  "groups": {
+    "include": [
+      "git_config"
+    ]
+  },
+  "filesystem": {
+    "allow": [
+      "$WORKDIR/.nono/nn"
+    ]
+  },
+  "network": {
+    "network_profile": "minimal",
+    "allow_domain": [
+      "proxy.golang.org",
+      "cloudcode-pa.googleapis.com",
+      "oauth2.googleapis.com"
+    ]
+  },
+  "environment": {
+    "allow_vars": [
+      "PATH",
+      "HOME",
+      "USER",
+      "SHELL",
+      "TERM",
+      "LANG",
+      "LC_*",
+      "TMPDIR"
+    ],
+    "set_vars": {
+      "GIT_AUTHOR_EMAIL": "test@example.com",
+      "GIT_AUTHOR_NAME": "Test User",
+      "GIT_COMMITTER_EMAIL": "test@example.com",
+      "GIT_COMMITTER_NAME": "Test User"
+    }
+  },
+  "workdir": {
+    "access": "readwrite"
+  }
+}
