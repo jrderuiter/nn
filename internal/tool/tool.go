@@ -17,15 +17,21 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"github.com/jrderuiter/nn/internal/nono"
-	"github.com/jrderuiter/nn/internal/secrets"
 )
+
+// SecretChecker makes sure that a secret key resolves. A provider needs no
+// more than that, because it only names secrets and never reads one: the
+// pipeline resolves them at launch. *secrets.Resolver is the real one.
+type SecretChecker interface {
+	Check(ctx context.Context, key string) error
+}
 
 // Env is everything a provider may read about the run.
 type Env struct {
 	Workdir     string // absolute working directory
 	ArtifactDir string // absolute path of $WORKDIR/.nono/nn
 	HomeDir     string
-	Secrets     *secrets.Resolver
+	Secrets     SecretChecker
 	Lookup      func(string) (string, bool) // host environment, for preflight only
 	// GitRemotes lists the remote URLs of the repository in Workdir. It is a
 	// function, like Lookup, so a test can hand a provider a fixed set without
