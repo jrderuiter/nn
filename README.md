@@ -122,6 +122,7 @@ allow_domain = ["proxy.golang.org"]
 
 [agents.claude]
 extends = ["nolabs-ai/claude"]
+network_profile = "claude-code"
 
 [tools.mise]
 [tools.go]
