@@ -107,8 +107,8 @@ func TestMergeDomainEndpointsConcatenate(t *testing.T) {
 	}
 }
 
-// The user's own raw block is the last word, so it replaces what a tool
-// set instead of reporting a conflict.
+// The user's own raw block is the last word, so it replaces a value that a
+// tool set instead of reporting a conflict. A list only grows.
 func TestAddOverrideReplaces(t *testing.T) {
 	m := NewMerger(&Profile{})
 	set := func(v string) *Profile {

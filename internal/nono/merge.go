@@ -29,8 +29,9 @@ func NewMerger(base *Profile) *Merger {
 // Profile returns the merged result.
 func (m *Merger) Profile() *Profile { return m.dst }
 
-// AddOverride folds src in and lets it replace what earlier layers set. It is
-// for the user's own raw profile block, which is meant to have the last word.
+// AddOverride folds src in and lets it replace a value or a map entry that an
+// earlier layer set. Lists still only grow, as in Add. It is for the user's own
+// raw profile block, which is meant to have the last word.
 func (m *Merger) AddOverride(src *Profile, name string) error {
 	m.override = true
 	defer func() { m.override = false }()

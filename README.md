@@ -367,6 +367,12 @@ Two tools that set the same key to different values are a configuration error,
 and `nn` names both of them rather than picking a winner. The `[nono.profile]`
 block is the one exception, because it is your own last word.
 
+The block overrides a single value, such as `workdir.access`, and an entry of
+a map, such as a variable in `set_vars`. A list works differently. The block
+adds its entries to the list that the tools built, and it cannot remove one.
+To take access away, write a deny rule, for example `filesystem.deny`,
+`network.deny_domain` or `environment.deny_vars`.
+
 ## Commands
 
 | Command | What it does |
