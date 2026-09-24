@@ -2,6 +2,8 @@ package azuredevops
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -255,5 +257,25 @@ func TestConfiguredProjectWins(t *testing.T) {
 func TestAzCLIOffWritesNoDefaults(t *testing.T) {
 	if a := build(t, acme+"az_cli = false\n").Artifacts; len(a) != 0 {
 		t.Fatalf("got %+v", a)
+	}
+}
+
+// Preflight asks fnox for the configured key, so doctor reports a PAT that
+// does not resolve before an agent sees a 401.
+func TestPreflightResolvesTheConfiguredSecret(t *testing.T) {
+	fnox := filepath.Join(t.TempDir(), "fnox")
+	script := "#!/bin/sh\nfor last; do :; done\n[ \"$last\" = ADO_PAT ] && echo pat && exit 0\necho \"no secret named $last\" >&2\nexit 1\n"
+	if err := os.WriteFile(fnox, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env := &tool.Env{Secrets: secrets.NewResolver(fnox, "", "")}
+	for secret, ok := range map[string]bool{"ADO_PAT": true, "OTHER": false} {
+		p, err := newProvider("organization = \"o\"\nproject = \"p\"\nsecret = \"" + secret + "\"\n")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := p.Preflight(context.Background(), env); (err == nil) != ok {
+			t.Errorf("secret %s: got %v", secret, err)
+		}
 	}
 }

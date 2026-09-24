@@ -2,6 +2,8 @@ package github
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/BurntSushi/toml"
@@ -172,6 +174,33 @@ func TestGitRouteStoresABasicAuthPair(t *testing.T) {
 		}
 		if s.Format != want {
 			t.Errorf("%s has format %q, want %q", s.EnvVar, s.Format, want)
+		}
+	}
+}
+
+// Preflight asks fnox for the configured key, so doctor reports a token that
+// does not resolve before an agent sees a 401.
+func TestPreflightResolvesTheConfiguredSecret(t *testing.T) {
+	fnox := filepath.Join(t.TempDir(), "fnox")
+	script := "#!/bin/sh\nfor last; do :; done\n[ \"$last\" = GH_TOKEN ] && echo token && exit 0\necho \"no secret named $last\" >&2\nexit 1\n"
+	if err := os.WriteFile(fnox, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env := &tool.Env{Secrets: secrets.NewResolver(fnox, "", "")}
+	for secret, ok := range map[string]bool{"GH_TOKEN": true, "OTHER": false} {
+		var cfg struct {
+			Tools map[string]toml.Primitive `toml:"tools"`
+		}
+		md, err := toml.Decode("[tools.github]\nsecret = \""+secret+"\"\n", &cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := New(md, cfg.Tools["github"])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := p.Preflight(context.Background(), env); (err == nil) != ok {
+			t.Errorf("secret %s: got %v", secret, err)
 		}
 	}
 }
