@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/jrderuiter/nn/internal/nono"
 	"github.com/jrderuiter/nn/internal/tool"
 )
 
@@ -30,5 +32,24 @@ func TestGitConfigIsNumberedOnce(t *testing.T) {
 		if vars[k] != v {
 			t.Errorf("%s = %q, want %q", k, vars[k], v)
 		}
+	}
+}
+
+// Only the named grants go. The rest keep their order, so the written profile
+// stays byte stable.
+func TestDropGrantsKeepsTheRest(t *testing.T) {
+	p := &nono.Profile{Filesystem: &nono.Filesystem{Allow: []nono.CondPath{
+		nono.P("$WORKDIR/.nono/nn"),
+		nono.P("$XDG_CACHE_HOME/go-build"),
+		nono.P("$HOME/go"),
+	}}}
+	dropGrants(p, map[string]bool{"$XDG_CACHE_HOME/go-build": true})
+	var got []string
+	for _, c := range p.Filesystem.Allow {
+		got = append(got, c.Path)
+	}
+	want := []string{"$WORKDIR/.nono/nn", "$HOME/go"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("got %v, want %v", got, want)
 	}
 }

@@ -388,9 +388,13 @@ agent when you pass `--agent`.
 `--agent` works with every command. `nn profile --agent agy` prints the profile
 of agy, and `nn init --agent agy` writes it.
 
-`nn profile` prints the profile to stdout and writes nothing. Add `--tool` once
-for each tool, and the profile holds only those tools. If you name a tool that
-`nn.toml` does not enable, `nn` stops with an error.
+`nn profile` prints the profile to stdout and writes nothing. Because it
+creates no directory, it can show a cache grant that `nn run` then drops: when
+`nn run` cannot create a cache or state directory that a tool asks for, it
+removes that grant and prints a warning.
+
+Add `--tool` once for each tool, and the profile holds only those tools. If you
+name a tool that `nn.toml` does not enable, `nn` stops with an error.
 
 `--as-mixin` leaves out the base layer and the `[nono]` settings. The output
 then holds only what the tools add, and another profile can extend it. A mixin

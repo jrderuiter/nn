@@ -590,10 +590,19 @@ func (p *plan) runArgs() []string {
 // nono silently ignores a grant whose path does not exist, but it refuses to
 // start when a granted path exists and cannot be read. Dropping the grant costs
 // one cache directory; keeping it would cost the whole run.
+//
+// It runs when nn writes the profile, not when nn builds it, because creating
+// a directory is a change to the host. `nn profile` and `nn doctor` promise to
+// change nothing, so their profile can hold a grant that `nn run` drops.
 func (p *plan) prepareOptionalDirs() {
+	dropGrants(p.profile, makeOptionalDirs(p.ensureDirs, p.ws.Workdir))
+}
+
+// makeOptionalDirs creates each directory and returns the ones it could not.
+func makeOptionalDirs(dirs []string, workdir string) map[string]bool {
 	unusable := map[string]bool{}
-	for _, d := range p.ensureDirs {
-		path := expandHostPath(d, p.ws.Workdir)
+	for _, d := range dirs {
+		path := expandHostPath(d, workdir)
 		if path == "" {
 			continue
 		}
@@ -606,16 +615,21 @@ func (p *plan) prepareOptionalDirs() {
 		fmt.Fprintf(os.Stderr, "nn: dropping the grant for %s, which is not usable: %v\n", d, err)
 		unusable[d] = true
 	}
-	if len(unusable) == 0 || p.profile.Filesystem == nil {
+	return unusable
+}
+
+// dropGrants removes the filesystem grants for the given profile paths.
+func dropGrants(profile *nono.Profile, paths map[string]bool) {
+	if len(paths) == 0 || profile.Filesystem == nil {
 		return
 	}
-	keep := p.profile.Filesystem.Allow[:0]
-	for _, c := range p.profile.Filesystem.Allow {
-		if !unusable[c.Path] {
+	keep := profile.Filesystem.Allow[:0]
+	for _, c := range profile.Filesystem.Allow {
+		if !paths[c.Path] {
 			keep = append(keep, c)
 		}
 	}
-	p.profile.Filesystem.Allow = keep
+	profile.Filesystem.Allow = keep
 }
 
 // expandHostPath resolves the profile-side variables that nn itself has to
