@@ -108,3 +108,35 @@ func TestEachAgentHasItsOwnProfileFile(t *testing.T) {
 		t.Errorf("nono does not get the agent profile: %v", agy.runArgs())
 	}
 }
+
+// The separator after a bare --agent becomes its value, which must read as a
+// missing name rather than as an agent called "--".
+func TestSelectAgentRejectsAFlagAsTheName(t *testing.T) {
+	cfg := &config.Config{Agents: map[string]config.Agent{"claude": {}}}
+	_, err := selectAgent(cfg, "--", []string{"agy"})
+	if err == nil || !strings.Contains(err.Error(), "needs a name") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+// A known agent without a section runs without its pack, which nn reports.
+// A command that is no agent, or a run with --agent, has nothing to report.
+func TestMissingAgentSection(t *testing.T) {
+	cfg := &config.Config{Agents: map[string]config.Agent{"claude": {}}}
+	cases := []struct {
+		flag    string
+		command []string
+		want    string
+	}{
+		{"", []string{"agy"}, "agy"},
+		{"", []string{"claude"}, ""},
+		{"", []string{"kubectl"}, ""},
+		{"claude", []string{"agy"}, ""},
+		{"", nil, ""},
+	}
+	for _, c := range cases {
+		if got := missingAgentSection(cfg, c.flag, c.command); got != c.want {
+			t.Errorf("missingAgentSection(%q, %v) = %q, want %q", c.flag, c.command, got, c.want)
+		}
+	}
+}
