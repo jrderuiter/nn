@@ -22,22 +22,22 @@ type Config struct {
 	// Organization is the name in dev.azure.com/{organization}. A token
 	// belongs to one organization, so only its remotes are rewritten. Without
 	// it, nn takes the organization from the remotes.
-	Organization string `toml:"organization" help:"organization in dev.azure.com/{organization}; else from the remotes"`
+	Organization string `toml:"organization"`
 	// Secret is the fnox key that holds the personal access token.
-	Secret string `toml:"secret" help:"fnox key holding the personal access token"`
+	Secret string `toml:"secret"`
 	// Project is the default project for az devops. Without it, nn takes the
 	// project from the remotes.
-	Project string `toml:"project" help:"default project for az devops; else from the remotes"`
+	Project string `toml:"project"`
 	// Projects are rewritten to HTTPS on top of the ones that the remotes of
 	// the repository name, so the agent can clone them over ssh too.
-	Projects []string `toml:"projects" help:"extra projects whose ssh remotes use HTTPS"`
+	Projects []string `toml:"projects"`
 	// RewriteSSH turns an ssh remote into its HTTPS equivalent inside the
 	// sandbox. Without it a repository cloned over ssh keeps using ssh, which
 	// carries no credential the proxy can inject, so fetch fails.
-	RewriteSSH *bool `toml:"rewrite_ssh" help:"use HTTPS for dev.azure.com remotes written as ssh"`
+	RewriteSSH *bool `toml:"rewrite_ssh"`
 	// AzCLI redirects the az configuration directory into the project, so the
 	// agent never touches the host az state.
-	AzCLI *bool `toml:"az_cli" help:"redirect the az configuration into the project"`
+	AzCLI *bool `toml:"az_cli"`
 }
 
 type provider struct{ cfg Config }

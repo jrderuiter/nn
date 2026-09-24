@@ -367,6 +367,12 @@ Two tools that set the same key to different values are a configuration error,
 and `nn` names both of them rather than picking a winner. The `[nono.profile]`
 block is the one exception, because it is your own last word.
 
+The block overrides a single value, such as `workdir.access`, and an entry of
+a map, such as a variable in `set_vars`. A list works differently. The block
+adds its entries to the list that the tools built, and it cannot remove one.
+To take access away, write a deny rule, for example `filesystem.deny`,
+`network.deny_domain` or `environment.deny_vars`.
+
 ## Commands
 
 | Command | What it does |
@@ -388,9 +394,13 @@ agent when you pass `--agent`.
 `--agent` works with every command. `nn profile --agent agy` prints the profile
 of agy, and `nn init --agent agy` writes it.
 
-`nn profile` prints the profile to stdout and writes nothing. Add `--tool` once
-for each tool, and the profile holds only those tools. If you name a tool that
-`nn.toml` does not enable, `nn` stops with an error.
+`nn profile` prints the profile to stdout and writes nothing. Because it
+creates no directory, it can show a cache grant that `nn run` then drops: when
+`nn run` cannot create a cache or state directory that a tool asks for, it
+removes that grant and prints a warning.
+
+Add `--tool` once for each tool, and the profile holds only those tools. If you
+name a tool that `nn.toml` does not enable, `nn` stops with an error.
 
 `--as-mixin` leaves out the base layer and the `[nono]` settings. The output
 then holds only what the tools add, and another profile can extend it. A mixin
@@ -429,6 +439,11 @@ Everything `nn` generates lands in `.nono/nn/` inside the project, with a
 .nono/nn/kube/ca.pem      the cluster certificate authority
 .nono/nn/gh/              the gh CLI configuration, kept away from the host
 ```
+
+When `nn run` or `nn init` writes the files, it also removes every entry in
+`.nono/nn/` that no configured tool uses. If you turn off the kubernetes tool,
+the next run removes `kube/`. The `.gitignore` and the profile files always
+stay, because another agent can be running with its profile.
 
 ## Portability
 

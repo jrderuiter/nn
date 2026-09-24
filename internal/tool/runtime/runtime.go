@@ -2,9 +2,9 @@
 //
 // Each one wraps a single nono group and adds what that group leaves out: the
 // writable state and cache directories, and the environment variables the
-// minimal base list would otherwise filter away. The capability is named after
-// the tool rather than the group, because the tool is what you declare and the
-// group is how it is granted.
+// minimal base list would otherwise filter away. Each is named after the
+// program rather than the group, because the program is what you declare and
+// the group is how it is granted.
 package runtime
 
 import (
@@ -17,8 +17,8 @@ import (
 	"github.com/jrderuiter/nn/internal/tool"
 )
 
-// Config is the table of one tool tool. The tools need no settings yet,
-// so declaring the capability at all is what turns it on.
+// Config is the table of one runtime tool. The tools need no settings yet,
+// so declaring the tool at all is what turns it on.
 type Config struct{}
 
 // spec describes what a tool needs on top of its nono group.

@@ -1,4 +1,4 @@
-// Command nn runs a command in a nono sandbox built from declared capabilities.
+// Command nn runs a command in a nono sandbox built from declared tools.
 package main
 
 import (
