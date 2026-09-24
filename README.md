@@ -135,6 +135,7 @@ email = "jane@example.com"
 secret = "GITHUB_TOKEN"
 
 [tools.kubernetes]
+auth            = "service-account"
 context         = "prod-eks"
 service_account = "claude-ro"
 service_account_namespace = "apps"
@@ -312,14 +313,28 @@ The tool does not cover the older `{org}.visualstudio.com` host.
 
 nono has no Kubernetes feature, so `nn` builds the access out of generic parts.
 
-With `service_account` set, `nn` writes a kubeconfig pointing at the real API
-server and a `credential_capture` that runs `kubectl create token` on the host.
-nono mints the token outside the sandbox with your own credentials. It then
-intercepts the connection and adds the token as a bearer header. The kubeconfig
-itself holds no credential. A cluster with an exec plugin, such as EKS or GKE,
-works, because the plugin runs on the host. Without `service_account`, `nn`
-writes a plain kubeconfig that carries the credentials of the context. That form
-puts them inside the sandbox, and it does not work for an exec plugin context.
+The `auth` key picks how the agent authenticates. It is `service-account` by
+default, or `host`.
+
+With `auth = "service-account"`, you must also set `service_account`. `nn`
+writes a kubeconfig pointing at the real API server and a `credential_capture`
+that runs `kubectl create token` on the host. nono mints the token outside the
+sandbox with your own credentials. It then intercepts the connection and adds
+the token as a bearer header. The kubeconfig itself holds no credential. A
+cluster with an exec plugin, such as EKS or GKE, works, because the plugin runs
+on the host.
+
+With `auth = "host"`, `nn` writes a plain kubeconfig that carries the
+credentials of the context, for example a client certificate and its key. The
+agent can read them and use them outside the sandbox until they expire. Use
+this form only for a local test cluster, such as one from k3d. It does not work
+for an exec plugin context, and `nn` refuses it together with `service_account`.
+
+```toml
+[tools.kubernetes]
+auth    = "host"
+context = "k3d-dev"
+```
 
 `nn` never creates service accounts or RBAC, and generates no per-endpoint
 rules. The permissions of the account are what limit the agent. Two keys exist

@@ -27,11 +27,15 @@ import (
 
 // Config is the [tools.kubernetes] table.
 type Config struct {
+	// Auth picks how the sandbox authenticates. "service-account", the default,
+	// keeps every credential on the host. "host" copies the credentials of the
+	// context into the sandbox, and exists for local test clusters.
+	Auth string `toml:"auth" help:"service-account (default) mints a token on the host; host copies the context credentials into the sandbox"`
 	// Context names the kubeconfig context to use. Empty means the current one.
 	Context string `toml:"context" help:"kubeconfig context to use, defaulting to the current one"`
-	// ServiceAccount turns on proxy mode. nono mints a token for this existing
-	// service account on the host. nn never creates accounts or RBAC.
-	ServiceAccount string `toml:"service_account" help:"existing service account to mint a token for; turns on proxy mode"`
+	// ServiceAccount is the existing service account that nono mints a token
+	// for on the host. nn never creates accounts or RBAC.
+	ServiceAccount string `toml:"service_account" help:"existing service account to mint a token for; required unless auth is host"`
 	// ServiceAccountNamespace is where the service account lives, defaulting to
 	// "default". It is also the default namespace in the generated kubeconfig.
 	ServiceAccountNamespace string `toml:"service_account_namespace" help:"namespace the service account lives in, and the default namespace in the sandbox"`
@@ -49,6 +53,12 @@ type Config struct {
 	// only helps when the API server uses a publicly trusted certificate.
 	AllowMissingCA bool `toml:"allow_missing_ca" help:"do not require a cluster certificate authority"`
 }
+
+// The values of auth.
+const (
+	authServiceAccount = "service-account"
+	authHost           = "host"
+)
 
 const routeName = "k8s"
 
@@ -76,7 +86,7 @@ func init() {
 }
 
 func New(md toml.MetaData, prim toml.Primitive) (tool.Provider, error) {
-	cfg := Config{TokenTTL: "1h", Kubectl: "kubectl", ServiceAccountNamespace: "default"}
+	cfg := Config{Auth: authServiceAccount, TokenTTL: "1h", Kubectl: "kubectl", ServiceAccountNamespace: "default"}
 	if err := md.PrimitiveDecode(prim, &cfg); err != nil {
 		return nil, err
 	}
@@ -89,6 +99,23 @@ func New(md toml.MetaData, prim toml.Primitive) (tool.Provider, error) {
 	}
 	if cfg.ServiceAccountNamespace == "" {
 		cfg.ServiceAccountNamespace = "default"
+	}
+	// The weaker form is never a fallback. A missing service account would
+	// otherwise put the host credentials, often a cluster admin, into the
+	// sandbox without anyone asking for it.
+	switch cfg.Auth {
+	case authServiceAccount:
+		if cfg.ServiceAccount == "" {
+			return nil, fmt.Errorf("auth %q needs service_account; set auth = %q to copy the "+
+				"context credentials into the sandbox instead", authServiceAccount, authHost)
+		}
+	case authHost:
+		if cfg.ServiceAccount != "" {
+			return nil, fmt.Errorf("auth %q uses the context credentials, so service_account %q would be ignored; "+
+				"remove one of them", authHost, cfg.ServiceAccount)
+		}
+	default:
+		return nil, fmt.Errorf("auth must be %q or %q, got %q", authServiceAccount, authHost, cfg.Auth)
 	}
 	return &provider{cfg: cfg, ttl: ttl}, nil
 }
@@ -129,7 +156,7 @@ func (p *provider) resolve(e *tool.Env) error {
 		p.kubeconfig = path
 	}
 
-	if p.cfg.ServiceAccount == "" {
+	if p.cfg.Auth == authHost {
 		return nil
 	}
 	p.kubectl, err = resolveKubectl(p.cfg.Kubectl)
@@ -183,7 +210,7 @@ func (p *provider) Preflight(ctx context.Context, e *tool.Env) error {
 	if err := p.resolve(e); err != nil {
 		return err
 	}
-	if p.cfg.ServiceAccount == "" {
+	if p.cfg.Auth == authHost {
 		return nil
 	}
 	// Minting a token here turns a confusing runtime warning into a clear
@@ -262,13 +289,13 @@ func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error)
 			return nil, err
 		}
 	}
-	if p.cfg.ServiceAccount == "" {
+	if p.cfg.Auth == authHost {
 		return p.buildDirect(e)
 	}
 	return p.buildProxy(e)
 }
 
-// buildProxy is the default form. kubectl talks to the real API server, and
+// buildProxy is the service-account form, and the default. kubectl talks to the real API server, and
 // nono's proxy intercepts the connection, adds the bearer token and verifies
 // the cluster certificate on the far side. The token never enters the sandbox.
 func (p *provider) buildProxy(e *tool.Env) (*tool.Result, error) {
@@ -344,14 +371,14 @@ func (p *provider) buildProxy(e *tool.Env) (*tool.Result, error) {
 	return &tool.Result{Fragment: f, Artifacts: artifacts}, nil
 }
 
-// buildDirect is the fallback without a service account. It copies the host
-// context's own credentials into the sandbox, which is weaker, and it does not
-// work for a context whose credentials come from an exec plugin.
+// buildDirect is the host form. It copies the host context's own credentials
+// into the sandbox, which is weaker, and it does not work for a context whose
+// credentials come from an exec plugin.
 func (p *provider) buildDirect(e *tool.Env) (*tool.Result, error) {
 	if _, isExec := p.res.User["exec"]; isExec {
 		return nil, fmt.Errorf(
 			"context %q authenticates with an exec plugin, which cannot run inside the sandbox; "+
-				"set service_account to use the proxy form instead", p.res.ContextName)
+				"set auth = %q and service_account to use the proxy form instead", p.res.ContextName, authServiceAccount)
 	}
 	ca, err := p.caBytes()
 	if err != nil {
