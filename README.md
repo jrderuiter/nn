@@ -331,6 +331,12 @@ agent can read them and use them outside the sandbox until they expire. Use
 this form only for a local test cluster, such as one from k3d. It does not work
 for an exec plugin context, and `nn` refuses it together with `service_account`.
 
+A local cluster listens on this machine, for example on `127.0.0.1:6550`. Go
+never sends a loopback address through a proxy, so kubectl connects to that
+port directly. `nn` then opens the port with `open_port` instead of allowing the
+host. On macOS, `open_port` also lets the sandbox listen on the port, but the
+cluster already holds it.
+
 ```toml
 [tools.kubernetes]
 auth    = "host"

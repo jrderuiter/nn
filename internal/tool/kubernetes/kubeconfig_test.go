@@ -358,4 +358,29 @@ users:
 	if !strings.Contains(string(cfg), "certificate-authority: ca.pem") || strings.Contains(string(cfg), "$") {
 		t.Fatalf("the kubeconfig must name ca.pem relative to itself:\n%s", cfg)
 	}
+	// The fixture server is on this machine, so its port is opened.
+	if n := r.Fragment.Network; len(n.OpenPort) != 1 || n.OpenPort[0] != 6443 || len(n.AllowDomain) != 0 {
+		t.Fatalf("a local cluster needs its port opened, got %+v", n)
+	}
+}
+
+// Go never sends a loopback address through a proxy, so a local cluster needs
+// its port opened rather than its host allowed.
+func TestLoopbackPort(t *testing.T) {
+	for in, want := range map[string]int{
+		"127.0.0.1:6550": 6550,
+		"localhost:6443": 6443,
+		"[::1]:6443":     6443,
+		"0.0.0.0:6550":   6550,
+		"127.0.0.1":      443,
+	} {
+		if got, ok := loopbackPort(in); !ok || got != want {
+			t.Errorf("%s: got %d, %v, want %d", in, got, ok, want)
+		}
+	}
+	for _, in := range []string{"ABCDEF.gr7.eu-west-1.eks.amazonaws.com", "10.0.0.5:6443", "k8s.example.com:6443"} {
+		if _, ok := loopbackPort(in); ok {
+			t.Errorf("%s is not on this machine", in)
+		}
+	}
 }
