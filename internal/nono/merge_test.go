@@ -42,7 +42,7 @@ func TestMergeConflictingCredentialCapture(t *testing.T) {
 	}
 	err := m.Add(second, "kubernetes")
 	if err == nil {
-		t.Fatal("two capabilities defining the same capture differently must be an error")
+		t.Fatal("two tools defining the same capture differently must be an error")
 	}
 	for _, want := range []string{"github", "kubernetes", "credential_capture[token]"} {
 		if !strings.Contains(err.Error(), want) {
@@ -70,7 +70,7 @@ func TestMergeConflictingScalar(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := m.Add(&Profile{Workdir: &Workdir{Access: "readwrite"}}, "b"); err == nil {
-		t.Fatal("two capabilities setting workdir.access differently must be an error")
+		t.Fatal("two tools setting workdir.access differently must be an error")
 	}
 }
 
@@ -107,8 +107,8 @@ func TestMergeDomainEndpointsConcatenate(t *testing.T) {
 	}
 }
 
-// The user's own raw block is the last word, so it replaces what a capability
-// set instead of reporting a conflict.
+// The user's own raw block is the last word, so it replaces a value that a
+// tool set instead of reporting a conflict. A list only grows.
 func TestAddOverrideReplaces(t *testing.T) {
 	m := NewMerger(&Profile{})
 	set := func(v string) *Profile {
@@ -125,6 +125,6 @@ func TestAddOverrideReplaces(t *testing.T) {
 	}
 	// The override flag must not leak into the next tool.
 	if err := m.Add(set("/third"), "git"); err == nil {
-		t.Fatal("a later capability must still conflict")
+		t.Fatal("a later tool must still conflict")
 	}
 }

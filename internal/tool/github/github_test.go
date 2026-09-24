@@ -2,11 +2,11 @@ package github
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/BurntSushi/toml"
 
-	"github.com/jrderuiter/nn/internal/secrets"
 	"github.com/jrderuiter/nn/internal/tool"
 )
 
@@ -25,7 +25,6 @@ func build(t *testing.T, body string) *tool.Result {
 	}
 	r, err := p.Build(context.Background(), &tool.Env{
 		Workdir: "/w", ArtifactDir: "/w/.nono/nn",
-		Secrets: secrets.NewResolver("fnox", "", ""),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -174,4 +173,36 @@ func TestGitRouteStoresABasicAuthPair(t *testing.T) {
 			t.Errorf("%s has format %q, want %q", s.EnvVar, s.Format, want)
 		}
 	}
+}
+
+// Preflight asks for the configured key, so doctor reports a token that does
+// not resolve before an agent sees a 401.
+func TestPreflightChecksTheConfiguredSecret(t *testing.T) {
+	env := &tool.Env{Secrets: fakeSecrets{"GH_TOKEN": true}}
+	for secret, ok := range map[string]bool{"GH_TOKEN": true, "OTHER": false} {
+		var cfg struct {
+			Tools map[string]toml.Primitive `toml:"tools"`
+		}
+		md, err := toml.Decode("[tools.github]\nsecret = \""+secret+"\"\n", &cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := New(md, cfg.Tools["github"])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := p.Preflight(context.Background(), env); (err == nil) != ok {
+			t.Errorf("secret %s: got %v", secret, err)
+		}
+	}
+}
+
+// fakeSecrets resolves only the keys it holds.
+type fakeSecrets map[string]bool
+
+func (f fakeSecrets) Check(_ context.Context, key string) error {
+	if !f[key] {
+		return fmt.Errorf("no secret named %s", key)
+	}
+	return nil
 }

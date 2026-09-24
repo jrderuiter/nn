@@ -7,7 +7,7 @@ import (
 	"github.com/jrderuiter/nn/internal/tool"
 )
 
-// Each tool capability must name exactly one nono group, so the mapping back to
+// Each runtime tool must name exactly one nono group, so the mapping back to
 // nono stays one to one and visible.
 func TestEachToolWrapsOneGroup(t *testing.T) {
 	for name, sp := range specs {
@@ -57,7 +57,7 @@ func TestEveryToolIsRegistered(t *testing.T) {
 	}
 	for _, n := range Names() {
 		if !known[n] {
-			t.Errorf("tool %q is not registered as a capability", n)
+			t.Errorf("tool %q is not registered as a tool", n)
 		}
 	}
 }

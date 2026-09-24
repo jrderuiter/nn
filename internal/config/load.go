@@ -19,7 +19,7 @@ const FileName = "nn.toml"
 // applies the command line overrides.
 //
 // The layers are merged as plain maps before anything is decoded into the
-// configuration struct. Decoding each file in turn would not work: a capability
+// configuration struct. Decoding each file in turn would not work: a tool
 // table is decoded lazily by its provider, and a second decode would replace
 // the first table rather than merge into it.
 // Options selects the layers that Load reads.
@@ -114,7 +114,7 @@ func describe(files []string) string {
 }
 
 // mergeMaps folds src into dst, descending into nested tables so a later layer
-// adds to a capability rather than replacing it.
+// adds to a tool rather than replacing it.
 func mergeMaps(dst, src map[string]any) {
 	for k, v := range src {
 		sub, isMap := v.(map[string]any)
@@ -167,7 +167,7 @@ func userConfigPath() string {
 }
 
 // rejectUnknown fails on a key that nn does not understand. Keys under
-// [capabilities] are exempt, because each provider decodes its own sub-table
+// [tools] are exempt, because each provider decodes its own sub-table
 // and validates it there. So are the raw profile blocks, which are checked
 // against the profile types when they are decoded.
 func rejectUnknown(source string, md toml.MetaData) error {
