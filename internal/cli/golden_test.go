@@ -66,18 +66,18 @@ func assertGolden(t *testing.T, p *plan, name string) {
 // the [agents.<name>] section to apply, or none when it is empty.
 func buildCase(t *testing.T, dir, agent string) *plan {
 	t.Helper()
-	setupCase(t, dir)
-	opts.agent = agent
-	p, err := build(context.Background(), opts, nil)
+	o := caseOptions(t, dir)
+	o.agent = agent
+	p, err := build(context.Background(), o, nil)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
 	return p
 }
 
-// setupCase fixes the environment for one case directory and points opts at
-// it. It returns the absolute path of the case.
-func setupCase(t *testing.T, dir string) string {
+// caseOptions fixes the environment for one case directory and returns the
+// options that point at it.
+func caseOptions(t *testing.T, dir string) options {
 	t.Helper()
 	abs, err := filepath.Abs(dir)
 	if err != nil {
@@ -88,35 +88,28 @@ func setupCase(t *testing.T, dir string) string {
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(abs, "home", ".cache"))
 	// A case cannot hold a real .git directory, because git does not commit
 	// one, so the remotes come from a fixture file with one URL per line.
-	savedRemotes := gitRemotes
-	t.Cleanup(func() { gitRemotes = savedRemotes })
-	gitRemotes = func(context.Context, string) ([]string, error) {
-		body, err := os.ReadFile(filepath.Join(abs, "remotes"))
-		if err != nil {
-			return nil, nil
-		}
-		return strings.Fields(string(body)), nil
-	}
-	saved := opts
-	t.Cleanup(func() { opts = saved })
-	opts = options{
+	return options{
 		workdir:    abs,
 		configPath: filepath.Join(abs, "nn.toml"),
+		gitRemotes: func(context.Context, string) ([]string, error) {
+			body, err := os.ReadFile(filepath.Join(abs, "remotes"))
+			if err != nil {
+				return nil, nil
+			}
+			return strings.Fields(string(body)), nil
+		},
 	}
-	return abs
 }
 
 // An unknown name is rejected rather than silently producing an empty profile.
 func TestUnknownToolNameIsRejected(t *testing.T) {
 	abs, _ := filepath.Abs("testdata/cases/all")
-	saved := opts
-	t.Cleanup(func() { opts = saved })
-	opts = options{
+	o := options{
 		workdir:    abs,
 		configPath: filepath.Join(abs, "nn.toml"),
 		only:       []string{"kubernets"},
 	}
-	if _, err := build(context.Background(), opts, nil); err == nil {
+	if _, err := build(context.Background(), o, nil); err == nil {
 		t.Fatal("a misspelled tool name must be an error")
 	}
 }
@@ -146,11 +139,7 @@ func TestAllowDomainFromTheConfiguration(t *testing.T) {
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	saved := opts
-	t.Cleanup(func() { opts = saved })
-	opts = options{workdir: dir, configPath: path}
-
-	p, err := build(context.Background(), opts, nil)
+	p, err := build(context.Background(), options{workdir: dir, configPath: path}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,41 +159,33 @@ func TestAllowDomainFromTheConfiguration(t *testing.T) {
 // Both branches run on any machine, because the flag is fatal on the platform
 // that does not want it: nono rejects an argument it does not define.
 func TestTrustFlagFollowsTheCredentialRoutes(t *testing.T) {
-	write := func(t *testing.T, body string) *plan {
+	write := func(t *testing.T, goos, body string) *plan {
 		t.Helper()
 		dir := t.TempDir()
 		path := filepath.Join(dir, "nn.toml")
 		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		saved := opts
-		t.Cleanup(func() { opts = saved })
-		opts = options{workdir: dir, configPath: path}
-		p, err := build(context.Background(), opts, nil)
+		p, err := build(context.Background(), options{workdir: dir, configPath: path, goos: goos}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return p
 	}
 
-	saved := trustsTheProxyCA
-	t.Cleanup(func() { trustsTheProxyCA = saved })
-
-	trustsTheProxyCA = true
-	withRoute := strings.Join(write(t, "[tools.github]\n").runArgs(), " ")
+	withRoute := strings.Join(write(t, "darwin", "[tools.github]\n").runArgs(), " ")
 	if !strings.Contains(withRoute, "--trust-proxy-ca") {
 		t.Errorf("a run with a credential route needs the flag: %s", withRoute)
 	}
 
-	noRoute := strings.Join(write(t, "[tools.mise]\n").runArgs(), " ")
+	noRoute := strings.Join(write(t, "darwin", "[tools.mise]\n").runArgs(), " ")
 	if strings.Contains(noRoute, "--trust-proxy-ca") {
 		t.Errorf("a run with no route must not ask to change the trust store: %s", noRoute)
 	}
 
 	// Where Go reads the trust bundle variables that nono sets, the flag is
 	// not merely unnecessary. nono does not define it, and refuses to start.
-	trustsTheProxyCA = false
-	elsewhere := strings.Join(write(t, "[tools.github]\n").runArgs(), " ")
+	elsewhere := strings.Join(write(t, "linux", "[tools.github]\n").runArgs(), " ")
 	if strings.Contains(elsewhere, "--trust-proxy-ca") {
 		t.Errorf("the flag must not be passed where nono has no such argument: %s", elsewhere)
 	}

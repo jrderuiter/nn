@@ -62,6 +62,6 @@ func ensureConfig(o options) error {
 	if err := os.WriteFile(path, []byte(example()), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
-	fmt.Fprintf(os.Stderr, "nn: wrote %s; edit it to suit the project\n", path)
+	o.warnf("wrote %s; edit it to suit the project", path)
 	return nil
 }

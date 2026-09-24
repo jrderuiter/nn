@@ -4,25 +4,35 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 )
 
-var opts options
-
 // Execute runs the command line and returns the process exit code.
+//
+// An interrupt cancels the context rather than killing nn outright, so a fnox
+// or kubectl call that waits for a touch or a password stops with it, and nn
+// reports the cancel as an error.
 func Execute() int {
-	root := newRoot()
-	if err := root.Execute(); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	root := newRoot(&options{})
+	if err := root.ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "nn: "+err.Error())
 		return 1
 	}
 	return 0
 }
 
-func newRoot() *cobra.Command {
+// newRoot builds the command tree around opts. The flags write into opts, and
+// every command reads from it, so a test can hand in a fixture such as
+// gitRemotes before it runs a command.
+func newRoot(opts *options) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "nn",
 		Short: "Run a command in a nono sandbox, built from declared tools",
@@ -53,7 +63,7 @@ that profile refers to, and runs nono with it.
 	// the version apart from -v, which is verbose on nn run.
 	root.Flags().BoolP("version", "V", false, "version for nn")
 
-	root.AddCommand(newRunCmd(), newInitCmd(), newProfileCmd(), newDoctorCmd(), newExampleCmd())
+	root.AddCommand(newRunCmd(opts), newInitCmd(opts), newProfileCmd(opts), newDoctorCmd(opts), newExampleCmd())
 	return root
 }
 
@@ -66,15 +76,15 @@ func commandFor(cmd *cobra.Command, args []string) []string {
 	return args
 }
 
-func runExec(p *plan) error {
+func runExec(ctx context.Context, p *plan, stdout io.Writer) error {
 	args := p.runArgs()
-	if verbose {
+	if p.opts.verbose {
 		p.trace(args)
 	}
-	if dryRun {
+	if p.opts.dryRun {
 		// stdout, so the command can be piped straight into a shell.
-		fmt.Println("nono " + strings.Join(quoteArgs(args), " "))
+		fmt.Fprintln(stdout, "nono "+strings.Join(quoteArgs(args), " "))
 		return nil
 	}
-	return execPlan(context.Background(), p)
+	return execPlan(ctx, p)
 }

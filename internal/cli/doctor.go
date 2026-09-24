@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 
@@ -12,7 +13,7 @@ import (
 	"github.com/jrderuiter/nn/internal/workspace"
 )
 
-func newDoctorCmd() *cobra.Command {
+func newDoctorCmd(opts *options) *cobra.Command {
 	return &cobra.Command{
 		Use:   "doctor",
 		Short: "Check the configuration and everything it depends on",
@@ -23,22 +24,24 @@ func newDoctorCmd() *cobra.Command {
 		SilenceUsage: true,
 		Args:         cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return doctor(context.Background())
+			o := *opts
+			o.stderr = cmd.ErrOrStderr()
+			return doctor(cmd.Context(), o, cmd.OutOrStdout())
 		},
 	}
 }
 
-func doctor(ctx context.Context) error {
-	fmt.Println(versionString())
+func doctor(ctx context.Context, opts options, w io.Writer) error {
+	fmt.Fprintln(w, versionString())
 
-	fmt.Println("tools on the host")
+	fmt.Fprintln(w, "tools on the host")
 	for _, b := range []string{"nono", "fnox", "kubectl", "git"} {
 		path, err := exec.LookPath(b)
 		if err != nil {
-			fmt.Printf("  %-8s not found on PATH\n", b)
+			fmt.Fprintf(w, "  %-8s not found on PATH\n", b)
 			continue
 		}
-		fmt.Printf("  %-8s %s\n", b, path)
+		fmt.Fprintf(w, "  %-8s %s\n", b, path)
 	}
 
 	if err := requireConfig(opts); err != nil {
@@ -50,14 +53,14 @@ func doctor(ctx context.Context) error {
 	}
 	cfg := pr.cfg
 
-	fmt.Println("\nconfiguration")
+	fmt.Fprintln(w, "\nconfiguration")
 	for _, s := range cfg.Sources() {
-		fmt.Printf("  %s\n", s)
+		fmt.Fprintf(w, "  %s\n", s)
 	}
 
-	fmt.Println("\ntools")
+	fmt.Fprintln(w, "\ntools")
 	if len(cfg.Tools) == 0 {
-		fmt.Printf("  none configured; available: %s\n", strings.Join(tool.Known(), ", "))
+		fmt.Fprintf(w, "  none configured; available: %s\n", strings.Join(tool.Known(), ", "))
 		return nil
 	}
 
@@ -67,13 +70,13 @@ func doctor(ctx context.Context) error {
 	for _, p := range pr.providers {
 		if err := p.Preflight(ctx, pr.env); err != nil {
 			failed++
-			fmt.Printf("  %-12s %s\n", p.Name(), firstLine(err))
+			fmt.Fprintf(w, "  %-12s %s\n", p.Name(), firstLine(err))
 			for _, line := range restLines(err) {
-				fmt.Printf("  %-12s %s\n", "", line)
+				fmt.Fprintf(w, "  %-12s %s\n", "", line)
 			}
 			continue
 		}
-		fmt.Printf("  %-12s ok\n", p.Name())
+		fmt.Fprintf(w, "  %-12s ok\n", p.Name())
 	}
 	if failed > 0 {
 		return fmt.Errorf("%d of %d tools cannot work as configured", failed, len(pr.providers))
@@ -86,7 +89,7 @@ func doctor(ctx context.Context) error {
 	if opts.agent != "" {
 		agents = []string{opts.agent}
 	}
-	fmt.Println("\nprofiles")
+	fmt.Fprintln(w, "\nprofiles")
 	invalid := 0
 	for _, agent := range agents {
 		o := opts
@@ -100,10 +103,10 @@ func doctor(ctx context.Context) error {
 		}
 		if err != nil {
 			invalid++
-			fmt.Printf("  %-22s %s\n", label, err)
+			fmt.Fprintf(w, "  %-22s %s\n", label, err)
 			continue
 		}
-		fmt.Printf("  %-22s valid\n", label)
+		fmt.Fprintf(w, "  %-22s valid\n", label)
 	}
 	if invalid > 0 {
 		return fmt.Errorf("%d of %d profiles are not valid", invalid, len(agents))

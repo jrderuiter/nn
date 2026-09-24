@@ -1,13 +1,12 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
 )
 
-func newInitCmd() *cobra.Command {
+func newInitCmd(opts *options) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "init",
 		Short: "Generate the sandbox files without running anything",
@@ -22,19 +21,22 @@ func newInitCmd() *cobra.Command {
 		SilenceUsage: true,
 		Args:         cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := ensureConfig(opts); err != nil {
+			o := *opts
+			o.stderr = cmd.ErrOrStderr()
+			if err := ensureConfig(o); err != nil {
 				return err
 			}
-			p, err := build(context.Background(), opts, nil)
+			p, err := build(cmd.Context(), o, nil)
 			if err != nil {
 				return err
 			}
 			if err := p.write(); err != nil {
 				return err
 			}
-			fmt.Println(p.ws.ProfilePath(p.agent))
+			out := cmd.OutOrStdout()
+			fmt.Fprintln(out, p.ws.ProfilePath(p.agent))
 			for _, a := range p.artifacts {
-				fmt.Println(p.ws.Path(a.RelPath))
+				fmt.Fprintln(out, p.ws.Path(a.RelPath))
 			}
 			return nil
 		},

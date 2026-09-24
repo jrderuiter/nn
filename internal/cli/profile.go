@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"context"
-
 	"github.com/spf13/cobra"
 
 	"github.com/jrderuiter/nn/internal/nono"
@@ -13,7 +11,7 @@ import (
 // It prints rather than writes, like example, so the profile can be read or
 // piped without touching .nono/nn. The artifacts that the profile refers to are
 // not written, so hand the output to nono only after nn init.
-func newProfileCmd() *cobra.Command {
+func newProfileCmd(opts *options) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "profile [--tool <name>]... [--as-mixin]",
 		Short: "Print the generated profile",
@@ -32,10 +30,12 @@ func newProfileCmd() *cobra.Command {
 		DisableFlagsInUseLine: true,
 		Args:                  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := requireConfig(opts); err != nil {
+			o := *opts
+			o.stderr = cmd.ErrOrStderr()
+			if err := requireConfig(o); err != nil {
 				return err
 			}
-			p, err := build(context.Background(), opts, nil)
+			p, err := build(cmd.Context(), o, nil)
 			if err != nil {
 				return err
 			}
