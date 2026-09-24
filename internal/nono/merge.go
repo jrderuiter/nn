@@ -150,6 +150,7 @@ func (m *Merger) mergeNetwork(d, s *Network, name string) error {
 	d.Credentials = appendUnique(d.Credentials, s.Credentials, func(v string) string { return v })
 	d.NoProxy = appendUnique(d.NoProxy, s.NoProxy, func(v string) string { return v })
 	d.OpenPort = appendUnique(d.OpenPort, s.OpenPort, func(v int) string { return fmt.Sprint(v) })
+	d.OpenPortRange = appendUnique(d.OpenPortRange, s.OpenPortRange, func(v [2]int) string { return fmt.Sprint(v) })
 	d.ListenPort = appendUnique(d.ListenPort, s.ListenPort, func(v int) string { return fmt.Sprint(v) })
 	d.AllowDomain = mergeDomains(d.AllowDomain, s.AllowDomain)
 

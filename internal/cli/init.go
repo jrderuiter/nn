@@ -16,7 +16,9 @@ func newInitCmd() *cobra.Command {
 			"nono, so the files can be read, kept, or used with nono directly.\n\n" +
 			"When the project has no nn.toml, init writes the example one first, and\n" +
 			"builds from that. An existing file is used as it is. Every other\n" +
-			"command needs that file, so init is how a project starts.",
+			"command needs that file, so init is how a project starts.\n\n" +
+			"init writes the shared profile. Pass --agent to write the profile of\n" +
+			"one agent instead.",
 		SilenceUsage: true,
 		Args:         cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -30,7 +32,7 @@ func newInitCmd() *cobra.Command {
 			if err := p.write(); err != nil {
 				return err
 			}
-			fmt.Println(p.ws.ProfilePath())
+			fmt.Println(p.ws.ProfilePath(p.agent))
 			for _, a := range p.artifacts {
 				fmt.Println(p.ws.Path(a.RelPath))
 			}
