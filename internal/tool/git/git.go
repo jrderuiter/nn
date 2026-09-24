@@ -19,12 +19,12 @@ import (
 // Config is the [tools.git] table.
 type Config struct {
 	// Name and Email set the committer identity inside the sandbox.
-	Name  string `toml:"name" help:"committer name inside the sandbox"`
-	Email string `toml:"email" help:"committer email inside the sandbox"`
+	Name  string `toml:"name"`
+	Email string `toml:"email"`
 	// Hosts are extra git hosts to allow, for example "gitlab.com".
-	Hosts []string `toml:"hosts" help:"extra git hosts to allow"`
+	Hosts []string `toml:"hosts"`
 	// Config grants read access to the host git configuration.
-	Config *bool `toml:"config" help:"grant read access to the host git configuration"`
+	Config *bool `toml:"config"`
 }
 
 type provider struct{ cfg Config }

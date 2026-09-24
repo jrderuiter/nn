@@ -28,26 +28,26 @@ import (
 // Config is the [tools.kubernetes] table.
 type Config struct {
 	// Context names the kubeconfig context to use. Empty means the current one.
-	Context string `toml:"context" help:"kubeconfig context to use, defaulting to the current one"`
+	Context string `toml:"context"`
 	// ServiceAccount turns on proxy mode. nono mints a token for this existing
 	// service account on the host. nn never creates accounts or RBAC.
-	ServiceAccount string `toml:"service_account" help:"existing service account to mint a token for; turns on proxy mode"`
+	ServiceAccount string `toml:"service_account"`
 	// ServiceAccountNamespace is where the service account lives, defaulting to
 	// "default". It is also the default namespace in the generated kubeconfig.
-	ServiceAccountNamespace string `toml:"service_account_namespace" help:"namespace the service account lives in, and the default namespace in the sandbox"`
+	ServiceAccountNamespace string `toml:"service_account_namespace"`
 	// TokenTTL is how long a minted token stays valid, for example "1h".
-	TokenTTL string `toml:"token_ttl" help:"how long a minted token stays valid, for example 1h"`
+	TokenTTL string `toml:"token_ttl"`
 	// Kubectl is the binary used to mint tokens on the host.
-	Kubectl string `toml:"kubectl" help:"kubectl binary used on the host; a real path, not a version manager shim"`
+	Kubectl string `toml:"kubectl"`
 	// Kubeconfig overrides the host kubeconfig path.
-	Kubeconfig string `toml:"kubeconfig" help:"host kubeconfig to read, defaulting to KUBECONFIG or ~/.kube/config"`
+	Kubeconfig string `toml:"kubeconfig"`
 	// ClusterCA points at a PEM file holding the cluster's certificate
 	// authority. Set it when the kubeconfig context does not carry one.
-	ClusterCA string `toml:"cluster_ca" help:"PEM file with the cluster certificate authority, when the context carries none"`
+	ClusterCA string `toml:"cluster_ca"`
 	// AllowMissingCA turns off nn's own check that a certificate authority
 	// was found. nono has no option to skip upstream verification, so this
 	// only helps when the API server uses a publicly trusted certificate.
-	AllowMissingCA bool `toml:"allow_missing_ca" help:"do not require a cluster certificate authority"`
+	AllowMissingCA bool `toml:"allow_missing_ca"`
 }
 
 const routeName = "k8s"
