@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -508,7 +509,34 @@ func (p *plan) write() error {
 	if err := p.ws.Write(workspace.ProfileFile(p.agent), body, 0o644); err != nil {
 		return err
 	}
+	removed, err := p.ws.Prune(usedEntries(p.artifacts, body))
+	if err != nil {
+		return fmt.Errorf("remove stale files: %w", err)
+	}
+	for _, name := range removed {
+		p.opts.warnf("removed %s, which no configured tool uses", p.ws.Path(name))
+	}
 	return nono.Validate(p.ws.ProfilePath(p.agent))
+}
+
+// artifactRef matches a path under the artifact directory in a profile, and
+// captures its first segment.
+var artifactRef = regexp.MustCompile(regexp.QuoteMeta(workspace.ProfileVar+"/") + `([^/"]+)`)
+
+// usedEntries names the top level entries of the artifact directory that the
+// run uses. An artifact claims its first segment. So does a path that the
+// profile names, because a tool can point a program at a directory there
+// without writing a file, as GH_CONFIG_DIR does.
+func usedEntries(artifacts []tool.Artifact, profile []byte) map[string]bool {
+	used := map[string]bool{}
+	for _, a := range artifacts {
+		first, _, _ := strings.Cut(filepath.ToSlash(a.RelPath), "/")
+		used[first] = true
+	}
+	for _, m := range artifactRef.FindAllSubmatch(profile, -1) {
+		used[string(m[1])] = true
+	}
+	return used
 }
 
 // dedupe keeps the first of each flag, so two tools asking for the same one

@@ -440,6 +440,11 @@ Everything `nn` generates lands in `.nono/nn/` inside the project, with a
 .nono/nn/gh/              the gh CLI configuration, kept away from the host
 ```
 
+When `nn run` or `nn init` writes the files, it also removes every entry in
+`.nono/nn/` that no configured tool uses. If you turn off the kubernetes tool,
+the next run removes `kube/`. The `.gitignore` and the profile files always
+stay, because another agent can be running with its profile.
+
 ## Portability
 
 `nn` writes every path in the profile relative to `$WORKDIR`, so the file works

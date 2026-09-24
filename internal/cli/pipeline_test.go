@@ -53,3 +53,20 @@ func TestDropGrantsKeepsTheRest(t *testing.T) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
 }
+
+// A directory counts as used when an artifact lives in it, or when the profile
+// points a program at it without an artifact, as GH_CONFIG_DIR does.
+func TestUsedEntriesReadsArtifactsAndProfile(t *testing.T) {
+	profile := []byte(`{"environment":{"set_vars":{"GH_CONFIG_DIR":"$WORKDIR/.nono/nn/gh"}},` +
+		`"filesystem":{"allow":["$WORKDIR/.nono/nn"]}}`)
+	got := usedEntries([]tool.Artifact{{RelPath: "kube/config"}}, profile)
+	want := map[string]bool{"kube": true, "gh": true}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for k := range want {
+		if !got[k] {
+			t.Errorf("%s is missing from %v", k, got)
+		}
+	}
+}
