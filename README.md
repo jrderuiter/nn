@@ -313,8 +313,9 @@ The tool does not cover the older `{org}.visualstudio.com` host.
 
 nono has no Kubernetes feature, so `nn` builds the access out of generic parts.
 
-The `auth` key picks how the agent authenticates. It is `service-account` by
-default, or `host`.
+The `auth` key picks how the agent authenticates, and it is required. Its value
+is `service-account` or `host`. The key has no default, so the configuration
+always states the form.
 
 With `auth = "service-account"`, you must also set `service_account`. `nn`
 writes a kubeconfig pointing at the real API server and a `credential_capture`

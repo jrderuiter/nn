@@ -15,6 +15,7 @@ project = "Platform"
 projects = ["Platform"]
 
 [tools.kubernetes]
+auth = "service-account"
 context = "prod-eks"
 service_account = "claude-ro"
 service_account_namespace = "apps"
