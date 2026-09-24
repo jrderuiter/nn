@@ -392,7 +392,10 @@ func (p *provider) buildDirect(e *tool.Env) (*tool.Result, error) {
 	var caPath string
 	artifacts := []tool.Artifact{}
 	if len(ca) > 0 {
-		caPath = kubeDir + "/ca.pem"
+		// kubectl reads this path, not nono, so it cannot use the $WORKDIR
+		// spelling of the profile. kubectl resolves a relative path against
+		// the directory of the kubeconfig, which is where ca.pem lands.
+		caPath = "ca.pem"
 		artifacts = append(artifacts, tool.Artifact{RelPath: "kube/ca.pem", Mode: 0o644, Content: ca})
 	}
 	cfgBytes, err := directKubeconfig(p.name(), p.res, caPath)

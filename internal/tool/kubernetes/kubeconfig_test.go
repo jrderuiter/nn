@@ -307,3 +307,55 @@ func TestAuthRejectsAnUnknownValue(t *testing.T) {
 		t.Fatal("an unknown auth value must be an error")
 	}
 }
+
+// kubectl reads the generated kubeconfig, and it expands no variable, so the
+// $WORKDIR spelling of the profile turns into a path that does not exist.
+// kubectl resolves a relative path against the directory of the kubeconfig,
+// which is where ca.pem lands.
+func TestDirectKubeconfigNamesTheCARelativeToItself(t *testing.T) {
+	host := filepath.Join(t.TempDir(), "config")
+	body := `apiVersion: v1
+kind: Config
+current-context: k3d
+clusters:
+  - name: k3d
+    cluster:
+      server: https://127.0.0.1:6443
+      certificate-authority-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCmZha2UKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+contexts:
+  - name: k3d
+    context:
+      cluster: k3d
+      user: k3d
+users:
+  - name: k3d
+    user:
+      token: local-static-token
+`
+	if err := os.WriteFile(host, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := &provider{cfg: Config{Auth: authHost, Kubeconfig: host}}
+	r, err := p.Build(context.Background(), &tool.Env{
+		Workdir: "/w", ArtifactDir: "/w/.nono/nn", HomeDir: "/h",
+		Lookup: func(string) (string, bool) { return "", false },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg, ca []byte
+	for _, a := range r.Artifacts {
+		switch a.RelPath {
+		case "kube/config":
+			cfg = a.Content
+		case "kube/ca.pem":
+			ca = a.Content
+		}
+	}
+	if len(ca) == 0 {
+		t.Fatal("the CA must be written next to the kubeconfig")
+	}
+	if !strings.Contains(string(cfg), "certificate-authority: ca.pem") || strings.Contains(string(cfg), "$") {
+		t.Fatalf("the kubeconfig must name ca.pem relative to itself:\n%s", cfg)
+	}
+}
