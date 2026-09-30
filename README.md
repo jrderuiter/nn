@@ -182,7 +182,10 @@ files, then delegates enforcement to nono:
    single profile, and writes it to `.nono/nn/profile.json` (or
    `.nono/nn/profile-<agent>.json` when targeting an agent). Paths in the profile
    are written relative to `$WORKDIR`, so profiles remain portable across
-   machines.
+   machines. On Linux, the profile also includes nono's `linux_temp_read` group.
+   nono lets a process write `/tmp` on Linux but not read it, and a build that
+   reads back its own temporary files then fails. macOS already grants this
+   read access.
 2. **Support files:** When tools require local files, `nn` creates them under
    `.nono/nn/`. For example, it writes a scoped `kube/config` and cluster CA for
    Kubernetes, or isolated `gh/` settings for GitHub. `nn` places a `.gitignore`

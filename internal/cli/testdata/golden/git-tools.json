@@ -5,6 +5,10 @@
   ],
   "groups": {
     "include": [
+      {
+        "name": "linux_temp_read",
+        "when": "linux"
+      },
       "unlink_protection",
       "mise_manager",
       "node_runtime",
