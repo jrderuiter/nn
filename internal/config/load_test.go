@@ -101,6 +101,7 @@ func TestExplicitPathSkipsTheSearch(t *testing.T) {
 
 var testKeys = []Key{
 	{Path: "tools.mise", Enable: true},
+	{Path: "tools.kubernetes", Enable: true},
 	{Path: "tools.go", Enable: true},
 	{Path: "tools.github", Enable: true},
 
@@ -138,8 +139,9 @@ func TestEnvHandlesAnUnderscoreInTheKey(t *testing.T) {
 	}
 }
 
-func TestEnvSetsAToolValueAndCreatesTheSection(t *testing.T) {
+func TestEnvSetsAToolValue(t *testing.T) {
 	root := t.TempDir()
+	write(t, filepath.Join(root, "nn.toml"), "[tools.kubernetes]\n")
 	t.Setenv("NN_TOOLS_KUBERNETES_CONTEXT", "prod")
 	t.Setenv("NN_TOOLS_KUBERNETES_TOKEN_TTL", "30m")
 	cfg, err := Load(Options{Dir: root, Keys: testKeys})
@@ -150,16 +152,63 @@ func TestEnvSetsAToolValueAndCreatesTheSection(t *testing.T) {
 		Context  string `toml:"context"`
 		TokenTTL string `toml:"token_ttl"`
 	}
-	prim, ok := cfg.Tools["kubernetes"]
-	if !ok {
-		t.Fatal("the environment should have created the tool section")
-	}
 	md := cfg.Meta()
-	if err := md.PrimitiveDecode(prim, &k); err != nil {
+	if err := md.PrimitiveDecode(cfg.Tools["kubernetes"], &k); err != nil {
 		t.Fatal(err)
 	}
 	if k.Context != "prod" || k.TokenTTL != "30m" {
 		t.Fatalf("got %+v", k)
+	}
+}
+
+// A setting alone must not turn a tool on. An image can then carry defaults
+// for a tool that the project does not use.
+func TestEnvSettingDoesNotEnableATool(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("NN_TOOLS_KUBERNETES_CONTEXT", "prod")
+	cfg, err := Load(Options{Dir: root, Keys: testKeys})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg.Tools["kubernetes"]; ok {
+		t.Fatal("a setting variable should not have enabled the tool")
+	}
+}
+
+// The section variable comes before the settings, so the settings fill in a
+// tool that the environment alone turns on.
+func TestEnvEnableThenSetting(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("NN_TOOLS_KUBERNETES", "true")
+	t.Setenv("NN_TOOLS_KUBERNETES_CONTEXT", "prod")
+	cfg, err := Load(Options{Dir: root, Keys: testKeys})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var k struct {
+		Context string `toml:"context"`
+	}
+	md := cfg.Meta()
+	if err := md.PrimitiveDecode(cfg.Tools["kubernetes"], &k); err != nil {
+		t.Fatal(err)
+	}
+	if k.Context != "prod" {
+		t.Fatalf("got %+v", k)
+	}
+}
+
+// A false section variable wins over the settings of the same tool.
+func TestEnvDisableWinsOverSettings(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, "nn.toml"), "[tools.kubernetes]\n")
+	t.Setenv("NN_TOOLS_KUBERNETES", "false")
+	t.Setenv("NN_TOOLS_KUBERNETES_CONTEXT", "prod")
+	cfg, err := Load(Options{Dir: root, Keys: testKeys})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg.Tools["kubernetes"]; ok {
+		t.Fatal("a false value should have removed the tool")
 	}
 }
 
