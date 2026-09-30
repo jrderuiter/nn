@@ -1,3 +1,9 @@
 /.nono/
 /bin/
 /dist/
+
+fnox.toml
+fnox.local.toml
+
+slides
+demo

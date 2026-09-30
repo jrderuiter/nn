@@ -1,5 +1,4 @@
 [nono]
-allow_domain = ["*"]
 
 [agents.claude]
 extends = ["nolabs-ai/claude"]
@@ -21,3 +20,4 @@ name = "Julian de Ruiter"
 email = "307739+jrderuiter@users.noreply.github.com"
 
 [tools.github]
+auth = "pat"
