@@ -471,6 +471,11 @@ func baseProfile(n config.Nono) *nono.Profile {
 			Allow: []nono.CondPath{nono.P(workspace.ProfileVar)},
 		},
 		Environment: &nono.Environment{AllowVars: append([]string{}, baseAllowVars...)},
+		// On Linux, nono's defaults let a process write /tmp but not read it,
+		// so a build that reads back its own temporary files fails. macOS
+		// already grants the read. The predicate keeps the profile the same
+		// bytes on both platforms.
+		Groups: &nono.Groups{Include: []nono.CondName{nono.GWhen("linux_temp_read", "linux")}},
 	}
 
 	p.Extends = append(p.Extends, n.Extends...)
@@ -483,9 +488,6 @@ func baseProfile(n config.Nono) *nono.Profile {
 	}
 
 	for _, g := range n.Groups {
-		if p.Groups == nil {
-			p.Groups = &nono.Groups{}
-		}
 		p.Groups.Include = append(p.Groups.Include, nono.G(g))
 	}
 	return p

@@ -5,6 +5,10 @@
   ],
   "groups": {
     "include": [
+      {
+        "name": "linux_temp_read",
+        "when": "linux"
+      },
       "mise_manager",
       "git_config"
     ]
