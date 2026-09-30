@@ -248,6 +248,11 @@ The variable naming a tool section enables that tool. For example,
 default for a single run. A true value never clears configuration that the
 section already carries.
 
+A setting variable, such as `NN_TOOLS_KUBERNETES_CONTEXT`, never turns a tool
+on. It only fills in a tool that a configuration file or the section variable
+turns on. A container image can then set defaults for a tool that a project
+does not use.
+
 ### Secrets
 
 `nn` uses [fnox](https://fnox.jdx.dev) to manage credentials. You never write
