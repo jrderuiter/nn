@@ -3,6 +3,8 @@ package kubernetes
 import (
 	"encoding/base64"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -30,6 +32,7 @@ type cluster struct {
 	CertificateAuthority     string `yaml:"certificate-authority,omitempty"`
 	CertificateAuthorityData string `yaml:"certificate-authority-data,omitempty"`
 	InsecureSkipTLSVerify    bool   `yaml:"insecure-skip-tls-verify,omitempty"`
+	TLSServerName            string `yaml:"tls-server-name,omitempty"`
 }
 
 type namedContext struct {
@@ -213,6 +216,7 @@ func directKubeconfig(name string, r *resolved, caPath string) ([]byte, error) {
 	cl := r.Cluster
 	cl.CertificateAuthorityData = ""
 	cl.CertificateAuthority = caPath
+	cl = dialLoopback(cl)
 	kc := kubeconfig{
 		APIVersion:     "v1",
 		Kind:           "Config",
@@ -225,4 +229,36 @@ func directKubeconfig(name string, r *resolved, caPath string) ([]byte, error) {
 		Users: []namedUser{{Name: name, User: r.User}},
 	}
 	return yaml.Marshal(kc)
+}
+
+// dialLoopback points a server on the unspecified address, which k3d writes
+// as 0.0.0.0, at the loopback address. Go bypasses the proxy only for a
+// loopback host, so kubectl sends 0.0.0.0 to the nono proxy, which refuses it.
+// tls-server-name keeps the name that the host verifies the certificate
+// against.
+func dialLoopback(cl cluster) cluster {
+	u, err := url.Parse(cl.Server)
+	if err != nil {
+		return cl
+	}
+	ip := net.ParseIP(u.Hostname())
+	if ip == nil || !ip.IsUnspecified() {
+		return cl
+	}
+	loopback := "127.0.0.1"
+	if ip.To4() == nil {
+		loopback = "::1"
+	}
+	if cl.TLSServerName == "" {
+		cl.TLSServerName = u.Hostname()
+	}
+	if port := u.Port(); port != "" {
+		u.Host = net.JoinHostPort(loopback, port)
+	} else if ip.To4() == nil {
+		u.Host = "[" + loopback + "]"
+	} else {
+		u.Host = loopback
+	}
+	cl.Server = u.String()
+	return cl
 }

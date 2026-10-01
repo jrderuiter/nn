@@ -384,3 +384,23 @@ func TestLoopbackPort(t *testing.T) {
 		}
 	}
 }
+
+// Go sends 0.0.0.0 through the proxy, because the address is not loopback.
+func TestDialLoopbackRewritesTheUnspecifiedAddress(t *testing.T) {
+	for in, want := range map[string][2]string{
+		"https://0.0.0.0:6550":    {"https://127.0.0.1:6550", "0.0.0.0"},
+		"https://[::]:6443":       {"https://[::1]:6443", "::"},
+		"https://0.0.0.0":         {"https://127.0.0.1", "0.0.0.0"},
+		"https://127.0.0.1:6550":  {"https://127.0.0.1:6550", ""},
+		"https://k8s.example.com": {"https://k8s.example.com", ""},
+	} {
+		got := dialLoopback(cluster{Server: in})
+		if got.Server != want[0] || got.TLSServerName != want[1] {
+			t.Errorf("%s: got %q, %q, want %q, %q", in, got.Server, got.TLSServerName, want[0], want[1])
+		}
+	}
+	kept := dialLoopback(cluster{Server: "https://0.0.0.0:6550", TLSServerName: "k3d"})
+	if kept.TLSServerName != "k3d" {
+		t.Errorf("an explicit tls-server-name must stay, got %q", kept.TLSServerName)
+	}
+}
