@@ -441,7 +441,7 @@ Install the pack with `nono pull nolabs-ai/codex` before running the agent.
 | `git` | A committer identity, git configuration, and extra hosts |
 | `github` | The GitHub API, plus clone, fetch, and push over HTTPS |
 | `azure_devops` | The Azure DevOps API, plus clone, fetch, and push over HTTPS |
-| `kubernetes` | Access to one cluster through nono's credential proxy |
+| `kubernetes` | Access to one or more clusters through nono's credential proxy |
 
 #### Runtimes
 
@@ -534,6 +534,8 @@ nono's credential proxy:
 | `kubectl` | Path to host `kubectl` binary (must be a real binary, not a shim). |
 | `cluster_ca` | Path to PEM CA certificate if the kubeconfig context lacks one. |
 | `allow_missing_ca` | Allow clusters without a CA certificate (default: `false`). |
+| `current` | The cluster that the sandbox kubeconfig selects (required with more than one cluster). |
+| `clusters` | One table for each cluster, keyed by its context name in the sandbox. |
 
 **Service account mode (recommended):**
 Mints short-lived tokens on the host using your own credentials and injects them
@@ -556,6 +558,38 @@ sandbox. Use only for local test clusters (e.g., k3d):
 auth    = "host"
 context = "k3d-dev"
 ```
+
+**More than one cluster:**
+Declare one table under `clusters` for each cluster. The key of the table is
+the context name in the sandbox, so the agent runs `kubectl --context prod`.
+Each table holds `auth`, `context`, `service_account`, `cluster_ca` and
+`allow_missing_ca` for its cluster. The other keys in `[tools.kubernetes]` are
+defaults that every cluster shares, and a cluster table can override them.
+
+```toml
+[tools.kubernetes]
+kubectl = "/opt/homebrew/bin/kubectl"
+current = "local"
+
+[tools.kubernetes.clusters.prod]
+auth            = "service-account"
+context         = "prod-eks"
+service_account = "agent-reader"
+
+[tools.kubernetes.clusters.local]
+auth    = "host"
+context = "k3d-dev"
+```
+
+`nn` writes one kubeconfig that holds every cluster. Each service account
+cluster gets its own token, proxy route and certificate authority file. nono
+mints each token at launch, so a backend that asks for a touch asks once for
+each cluster.
+
+nono picks a proxy route by the host of the API server. If two clusters use
+the same API server and one of them uses `"service-account"`, `nn` stops with
+an error. The `clusters` tables come from `nn.toml` only, because they have no
+spelling as one environment variable.
 
 ## Development
 

@@ -170,6 +170,12 @@ func EnvKeys() []ConfigKey {
 			for ft.Kind() == reflect.Pointer {
 				ft = ft.Elem()
 			}
+			// A table of tables, such as the named clusters of kubernetes,
+			// has no flat spelling as one variable, so it comes from
+			// nn.toml alone.
+			if ft.Kind() == reflect.Map || ft.Kind() == reflect.Struct {
+				continue
+			}
 			out = append(out, ConfigKey{
 				Path: "tools." + name + "." + key,
 				List: ft.Kind() == reflect.Slice,
