@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/jrderuiter/nn/internal/tool"
@@ -47,6 +48,18 @@ func TestToolWithoutGapsIsJustTheGroup(t *testing.T) {
 	}
 	if r.Fragment.Filesystem != nil || r.Fragment.Environment != nil {
 		t.Fatal("bun needs nothing beyond its group")
+	}
+}
+
+// A platform path is granted everywhere in the profile, but created only on
+// its own platform.
+func TestEnsureDirsSkipsOtherPlatforms(t *testing.T) {
+	allow := specs["mise"].allow
+	if got := ensureDirs(allow, "darwin"); len(got) != 3 {
+		t.Errorf("macOS must create all three mise paths, got %v", got)
+	}
+	if got := ensureDirs(allow, "linux"); slices.Contains(got, "$HOME/Library/Caches/mise") || len(got) != 2 {
+		t.Errorf("Linux must not create the macOS cache, got %v", got)
 	}
 }
 

@@ -9,6 +9,8 @@ package runtime
 
 import (
 	"context"
+	goruntime "runtime"
+	"slices"
 	"sort"
 
 	"github.com/BurntSushi/toml"
@@ -27,7 +29,7 @@ type spec struct {
 	group string
 	// read and allow are the paths the group misses.
 	read  []string
-	allow []string
+	allow []nono.CondPath
 	// allowVars are the environment variables the tool needs.
 	allowVars []string
 }
@@ -36,17 +38,22 @@ type spec struct {
 // `nono profile groups <name>`, and only the gaps are listed here.
 var specs = map[string]spec{
 	// mise_manager grants read on /etc/mise, ~/.local/bin/mise, ~/.config/mise
-	// and ~/.local/share/mise, and nothing writable.
+	// and ~/.local/share/mise, and nothing writable. On macOS mise keeps its
+	// cache under ~/Library/Caches, not ~/.cache.
 	"mise": {
 		group: "mise_manager",
-		allow: []string{"$HOME/.local/state/mise", "$HOME/.cache/mise"},
+		allow: []nono.CondPath{
+			nono.P("$HOME/.local/state/mise"),
+			nono.P("$HOME/.cache/mise"),
+			nono.PWhen("$HOME/Library/Caches/mise", "macos"),
+		},
 	},
 	// go_runtime grants read on ~/go and /usr/local/go. The module cache and
 	// the build cache sit under those and must be writable, or every build
 	// fails on the first download.
 	"go": {
 		group:     "go_runtime",
-		allow:     []string{"$HOME/go/pkg/mod", "$XDG_CACHE_HOME/go-build"},
+		allow:     []nono.CondPath{nono.P("$HOME/go/pkg/mod"), nono.P("$XDG_CACHE_HOME/go-build")},
 		allowVars: []string{"GO*", "CGO_*"},
 	},
 	"node": {
@@ -117,12 +124,27 @@ func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error)
 		for _, r := range p.spec.read {
 			f.Filesystem.Read = append(f.Filesystem.Read, nono.P(r))
 		}
-		for _, a := range p.spec.allow {
-			f.Filesystem.Allow = append(f.Filesystem.Allow, nono.P(a))
-		}
+		f.Filesystem.Allow = append(f.Filesystem.Allow, p.spec.allow...)
 	}
 	if len(p.spec.allowVars) > 0 {
 		f.Environment = &nono.Environment{AllowVars: p.spec.allowVars}
 	}
-	return &tool.Result{Fragment: f, EnsureDirs: p.spec.allow}, nil
+	return &tool.Result{Fragment: f, EnsureDirs: ensureDirs(p.spec.allow, goruntime.GOOS)}, nil
+}
+
+// ensureDirs lists the paths to create on this platform. The profile keeps
+// every entry, so it stays the same bytes on every machine, but a macOS path
+// must not appear as an empty directory on Linux.
+func ensureDirs(paths []nono.CondPath, goos string) []string {
+	platform := map[string]string{"darwin": "macos"}[goos]
+	if platform == "" {
+		platform = goos
+	}
+	var out []string
+	for _, c := range paths {
+		if len(c.When) == 0 || slices.Contains(c.When, platform) {
+			out = append(out, c.Path)
+		}
+	}
+	return out
 }
