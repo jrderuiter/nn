@@ -92,6 +92,9 @@ type options struct {
 	// means ask git. A test hands in a fixture, because a case directory
 	// cannot hold a real .git directory.
 	gitRemotes func(ctx context.Context, dir string) ([]string, error)
+	// gitCommonDir finds the shared git directory of a linked worktree. Nil
+	// means ask git.
+	gitCommonDir func(ctx context.Context, dir string) (string, error)
 	// goos is the platform that decides the trust flag. Empty means this one.
 	goos string
 }
@@ -165,6 +168,10 @@ func prepare(opts options) (*prep, error) {
 	if remotes == nil {
 		remotes = gitRemotes
 	}
+	commonDir := opts.gitCommonDir
+	if commonDir == nil {
+		commonDir = gitCommonDir
+	}
 
 	return &prep{
 		cfg: cfg,
@@ -177,6 +184,9 @@ func prepare(opts options) (*prep, error) {
 			Lookup:      os.LookupEnv,
 			GitRemotes: func(ctx context.Context) ([]string, error) {
 				return remotes(ctx, ws.Workdir)
+			},
+			GitCommonDir: func(ctx context.Context) (string, error) {
+				return commonDir(ctx, ws.Workdir)
 			},
 		},
 		providers: providers,
@@ -395,6 +405,26 @@ func gitRemotes(ctx context.Context, dir string) ([]string, error) {
 		}
 	}
 	return urls, nil
+}
+
+// gitCommonDir returns the shared git directory when dir is in a linked
+// worktree. There, .git is a file that points into the main repository, which
+// keeps the objects, refs and configuration outside the working directory. In
+// a normal clone the two directories are the same, and it returns nothing. A
+// missing git or a directory that is not a repository is not an error.
+func gitCommonDir(ctx context.Context, dir string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--path-format=absolute",
+		"--git-dir", "--git-common-dir")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", nil
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) != 2 || lines[0] == lines[1] {
+		return "", nil
+	}
+	return lines[1], nil
 }
 
 // selectProviders applies the --tool flag on top of the configured set.

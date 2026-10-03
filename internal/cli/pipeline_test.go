@@ -1,6 +1,10 @@
 package cli
 
 import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -68,5 +72,44 @@ func TestUsedEntriesReadsArtifactsAndProfile(t *testing.T) {
 		if !got[k] {
 			t.Errorf("%s is missing from %v", k, got)
 		}
+	}
+}
+
+// A linked worktree reports the git directory of the main repository. The
+// main checkout reports nothing, because its .git is in the working directory.
+func TestGitCommonDirFindsTheMainRepository(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := filepath.Join(tmp, "repo")
+	wt := filepath.Join(tmp, "wt")
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = tmp
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "-q", repo)
+	run("-C", repo, "commit", "-q", "--allow-empty", "-m", "init")
+	run("-C", repo, "worktree", "add", "-q", wt)
+
+	ctx := context.Background()
+	if got, _ := gitCommonDir(ctx, wt); got != filepath.Join(repo, ".git") {
+		t.Errorf("worktree: got %q", got)
+	}
+	if got, _ := gitCommonDir(ctx, repo); got != "" {
+		t.Errorf("main checkout: got %q", got)
+	}
+	if got, _ := gitCommonDir(ctx, tmp); got != "" {
+		t.Errorf("not a repository: got %q", got)
 	}
 }

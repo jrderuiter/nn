@@ -4,6 +4,9 @@
 // It does not pass the host ssh agent socket through. Pushing over ssh would
 // need that socket, and the github tool rewrites github.com remotes to HTTPS
 // instead, where the proxy injects a token that the sandbox never sees.
+//
+// In a linked worktree it also grants the shared git directory of the main
+// repository, because git keeps the objects and refs there.
 package git
 
 import (
@@ -25,6 +28,9 @@ type Config struct {
 	Hosts []string `toml:"hosts"`
 	// Config grants read access to the host git configuration.
 	Config *bool `toml:"config"`
+	// Worktree grants read and write access to the shared git directory when
+	// the working directory is a linked worktree.
+	Worktree *bool `toml:"worktree"`
 }
 
 type provider struct{ cfg Config }
@@ -46,6 +52,10 @@ func New(md toml.MetaData, prim toml.Primitive) (tool.Provider, error) {
 	if cfg.Config == nil {
 		v := true
 		cfg.Config = &v
+	}
+	if cfg.Worktree == nil {
+		v := true
+		cfg.Worktree = &v
 	}
 	if (cfg.Name == "") != (cfg.Email == "") {
 		return nil, fmt.Errorf("name and email must be set together")
@@ -83,5 +93,17 @@ func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error)
 		f.Network.AllowDomain = append(f.Network.AllowDomain, nono.Domain{Domain: h})
 	}
 
-	return &tool.Result{Fragment: f}, nil
+	r := &tool.Result{Fragment: f}
+	if *p.cfg.Worktree && e.GitCommonDir != nil {
+		dir, err := e.GitCommonDir(ctx)
+		if err != nil {
+			return nil, err
+		}
+		// A flag, not a profile path: the directory is absolute and differs
+		// per machine, and the profile must stay portable.
+		if dir != "" {
+			r.NonoArgs = []string{"--allow", dir}
+		}
+	}
+	return r, nil
 }

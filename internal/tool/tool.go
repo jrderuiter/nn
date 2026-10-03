@@ -37,6 +37,9 @@ type Env struct {
 	// function, like Lookup, so a test can hand a provider a fixed set without
 	// a real repository. It returns nothing when Workdir is not a repository.
 	GitRemotes func(ctx context.Context) ([]string, error)
+	// GitCommonDir returns the absolute shared git directory when Workdir is a
+	// linked worktree, and an empty string otherwise.
+	GitCommonDir func(ctx context.Context) (string, error)
 }
 
 // Artifact is a file that the generated profile refers to.
