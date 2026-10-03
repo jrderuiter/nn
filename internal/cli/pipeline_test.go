@@ -113,3 +113,29 @@ func TestGitCommonDirFindsTheMainRepository(t *testing.T) {
 		t.Errorf("not a repository: got %q", got)
 	}
 }
+
+// On Linux a socket lets the agent act outside the sandbox, so the block is
+// on unless the user's own [nono.profile] block turns it off.
+func TestUnixSocketsAreBlockedByDefault(t *testing.T) {
+	profileFor := func(t *testing.T, body string) *nono.Profile {
+		t.Helper()
+		dir := t.TempDir()
+		path := filepath.Join(dir, "nn.toml")
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		p, err := build(context.Background(), options{workdir: dir, configPath: path}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p.profile
+	}
+
+	if got := profileFor(t, "[tools.git]\n").Linux; got == nil || got.AfUnixMediation != "pathname" {
+		t.Errorf("expected af_unix_mediation = pathname, got %+v", got)
+	}
+	off := profileFor(t, "[nono.profile.linux]\naf_unix_mediation = \"off\"\n").Linux
+	if off == nil || off.AfUnixMediation != "off" {
+		t.Errorf("the [nono.profile] block must turn the block off, got %+v", off)
+	}
+}

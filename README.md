@@ -321,18 +321,22 @@ their Unix sockets. A Unix socket is a file that a local program listens on.
 Through it, the agent can make that program act outside the sandbox, for
 example to control your terminal sessions.
 
-To block this, add this block to `nn.toml`:
+nn blocks these sockets by default. The block has no effect on macOS.
+
+If a program in the sandbox needs a socket, such as `ssh-agent`, add the socket
+path to `filesystem.unix_socket` in the `[nono.profile]` block:
+
+```toml
+[nono.profile.filesystem]
+unix_socket = ["/run/user/1000/ssh-agent.socket"]
+```
+
+To turn the block off, add this block to `nn.toml`:
 
 ```toml
 [nono.profile.linux]
-af_unix_mediation = "pathname"
+af_unix_mediation = "off"
 ```
-
-The setting has no effect on macOS, so you can share it with macOS users.
-
-If a program in the sandbox then stops working because it needs a socket, such
-as `ssh-agent`, add the socket path to `filesystem.unix_socket` in the
-`[nono.profile]` block.
 
 ### Running inside herdr
 
