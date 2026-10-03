@@ -17,7 +17,11 @@
     "allow": [
       "$WORKDIR/.nono/nn",
       "$HOME/.local/state/mise",
-      "$HOME/.cache/mise"
+      "$HOME/.cache/mise",
+      {
+        "path": "$HOME/Library/Caches/mise",
+        "when": "macos"
+      }
     ]
   },
   "network": {
