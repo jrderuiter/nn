@@ -5,6 +5,8 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/BurntSushi/toml"
+
 	"github.com/jrderuiter/nn/internal/tool"
 )
 
@@ -72,5 +74,41 @@ func TestEveryToolIsRegistered(t *testing.T) {
 		if !known[n] {
 			t.Errorf("tool %q is not registered as a tool", n)
 		}
+	}
+}
+
+func buildMise(t *testing.T, body string) *tool.Result {
+	t.Helper()
+	var cfg struct {
+		Tools map[string]toml.Primitive `toml:"tools"`
+	}
+	md, err := toml.Decode("[tools.mise]\n"+body, &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := factoryFor("mise")(md, cfg.Tools["mise"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := p.Build(context.Background(), &tool.Env{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// The trusted path is the profile spelling of the working directory, so the
+// profile stays portable.
+func TestMiseTrustsTheWorkdir(t *testing.T) {
+	r := buildMise(t, "trust_workdir = true\n")
+	if got := r.Fragment.Environment.SetVars["MISE_TRUSTED_CONFIG_PATHS"]; got != "$WORKDIR" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestMiseTrustsNothingByDefault(t *testing.T) {
+	r := buildMise(t, "")
+	if r.Fragment.Environment != nil {
+		t.Fatalf("got %+v", r.Fragment.Environment)
 	}
 }

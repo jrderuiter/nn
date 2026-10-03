@@ -98,7 +98,8 @@
       "GIT_CONFIG_VALUE_2": "git@ssh.dev.azure.com:v3/acme/Platform/",
       "GIT_CONFIG_VALUE_3": "ssh://git@ssh.dev.azure.com/v3/acme/Platform/",
       "KUBECACHEDIR": "$WORKDIR/.nono/nn/kube/cache",
-      "KUBECONFIG": "$WORKDIR/.nono/nn/kube/config"
+      "KUBECONFIG": "$WORKDIR/.nono/nn/kube/config",
+      "MISE_TRUSTED_CONFIG_PATHS": "$WORKDIR"
     }
   },
   "workdir": {
