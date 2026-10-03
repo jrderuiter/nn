@@ -70,7 +70,10 @@ A tool is one thing an agent can be given. Follow the shape of
 
 1. Create `internal/tool/<name>/<name>.go`.
 2. Declare a `Config` struct. Give every field a `toml` tag and a doc comment.
-   The environment keys come from the `toml` tags.
+   The environment keys come from the `toml` tags. Do not use the key
+   `enabled`: the config layer reserves it to switch a table off, and removes
+   it before the provider decodes the table. Apply a string default when the
+   decoded value is empty, so that a later layer can give the default back.
 3. Call `tool.Register` from `init`, with a factory and a prototype function.
 4. Implement `Name`, `Preflight` and `Build`.
 5. Add the blank import to the provider block in `internal/cli/pipeline.go`.

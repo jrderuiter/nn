@@ -36,11 +36,15 @@ func applyEnv(dst map[string]any, keys []Key) {
 			continue
 		}
 		if truthy(raw) {
-			// Only create the section. A section that the file already wrote
-			// keeps its settings.
-			if _, exists := lookup(dst, path); !exists {
-				setPath(dst, path, map[string]any{})
+			// Only create the section, or turn on one that a file switched
+			// off. A section that a file already wrote keeps its settings.
+			section, _ := lookup(dst, path)
+			table, ok := section.(map[string]any)
+			if !ok {
+				table = map[string]any{}
+				setPath(dst, path, table)
 			}
+			delete(table, EnabledKey)
 			continue
 		}
 		remove(dst, path)
@@ -87,8 +91,9 @@ type Key struct {
 	// separated string.
 	List bool
 	// Enable says the path names a whole tool rather than a setting. A true
-	// value writes the section, a false value removes it. A runtime has no
-	// settings, so this is the only way the environment can turn one on.
+	// value writes the section and overrides enabled = false in a file, a
+	// false value removes it. A runtime has no settings, so this is the only
+	// way the environment can turn one on.
 	Enable bool
 }
 

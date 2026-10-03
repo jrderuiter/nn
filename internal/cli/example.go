@@ -50,6 +50,8 @@ func example() string {
 	p("#")
 	p("# Writing a [tools.<name>] section is what turns that tool on. From the")
 	p("# environment that is NN_TOOLS_<NAME>=true, and =false turns one off.")
+	p("# enabled = false in a section, or in one cluster of kubernetes, removes")
+	p("# it again, so a later file can drop what an earlier file declares.")
 	p("")
 	p("[nono]")
 	p("# nono profiles to extend, merged before the generated parts. Hand")
