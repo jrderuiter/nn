@@ -314,6 +314,30 @@ Lists behave differently. The block adds its entries to the list that the tools
 built; it cannot remove an entry. To restrict access, write a deny rule, such as
 `filesystem.deny`, `network.deny_domain`, or `environment.deny_vars`.
 
+#### Unix sockets on Linux
+
+A Unix socket is a file through which a local service takes requests. On Linux,
+a sandboxed process can connect to any Unix socket that it can reach on the file
+system. The service on the other side then acts outside the sandbox. For
+example, an agent that connects to the herdr session socket can drive panes
+outside the sandbox.
+
+To block this, set `linux.af_unix_mediation` to `"pathname"`:
+
+```toml
+[nono.profile.linux]
+af_unix_mediation = "pathname"
+```
+
+With this value, nono blocks a connect or a bind on a socket path, unless a
+`filesystem.unix_socket` rule grants that path. The value `"off"` keeps the
+default behavior. nono applies the key only on Linux, so you can keep it in a
+configuration that you share with macOS users.
+
+No tool grants a socket yet. If a program in the sandbox needs a socket, such as
+the `ssh-agent` socket, add its path to `filesystem.unix_socket` in the
+`[nono.profile]` block.
+
 ## Configuration reference
 
 ### Full example
