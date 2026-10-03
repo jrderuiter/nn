@@ -128,3 +128,26 @@ func TestAddOverrideReplaces(t *testing.T) {
 		t.Fatal("a later tool must still conflict")
 	}
 }
+
+func TestMergeAfUnixMediation(t *testing.T) {
+	set := func(v string) *Profile { return &Profile{Linux: &Linux{AfUnixMediation: v}} }
+
+	m := NewMerger(&Profile{})
+	if err := m.Add(set("off"), "a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Add(set("pathname"), "b"); err == nil {
+		t.Fatal("two layers setting linux.af_unix_mediation differently must be an error")
+	}
+	if err := m.AddOverride(set("pathname"), "the [nono.profile] block"); err != nil {
+		t.Fatalf("the raw block must override, not conflict: %v", err)
+	}
+	if got := m.Profile().Linux.AfUnixMediation; got != "pathname" {
+		t.Fatalf("got %q, want the override to win", got)
+	}
+
+	err := NewMerger(&Profile{}).Add(set("strict"), "the [nono.profile] block")
+	if err == nil || !strings.Contains(err.Error(), "pathname") {
+		t.Fatalf("an unknown mode must be an error that lists the valid ones, got %v", err)
+	}
+}

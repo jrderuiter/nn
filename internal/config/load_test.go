@@ -306,3 +306,30 @@ func TestAgentProfileBlock(t *testing.T) {
 		t.Fatal("a misspelled key in an agent profile block must be an error")
 	}
 }
+
+// The linux table decodes in both raw profile blocks. Without a Linux field
+// the strict decoder rejected it as an unknown field.
+func TestProfileBlockDecodesLinux(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nn.toml")
+	write(t, path, "[nono.profile.linux]\naf_unix_mediation = \"pathname\"\n\n"+
+		"[agents.claude.profile.linux]\naf_unix_mediation = \"off\"\n")
+	cfg, err := Load(Options{Dir: dir, Explicit: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := cfg.RawProfile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw == nil || raw.Linux == nil || raw.Linux.AfUnixMediation != "pathname" {
+		t.Fatalf("[nono.profile.linux]: got %+v", raw)
+	}
+	agent, err := cfg.AgentProfile("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agent == nil || agent.Linux == nil || agent.Linux.AfUnixMediation != "off" {
+		t.Fatalf("[agents.claude.profile.linux]: got %+v", agent)
+	}
+}

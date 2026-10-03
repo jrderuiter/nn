@@ -3,6 +3,7 @@ package nono
 import (
 	"fmt"
 	"reflect"
+	"slices"
 )
 
 // Merger folds tool fragments onto a base profile.
@@ -93,6 +94,20 @@ func (m *Merger) Add(src *Profile, name string) error {
 			d.Workdir = &Workdir{}
 		}
 		if err := m.setScalar(&d.Workdir.Access, src.Workdir.Access, "workdir.access", name); err != nil {
+			return err
+		}
+	}
+
+	if src.Linux != nil && src.Linux.AfUnixMediation != "" {
+		v := src.Linux.AfUnixMediation
+		if !slices.Contains(AfUnixMediationModes, v) {
+			return fmt.Errorf("%q sets linux.af_unix_mediation to %q; nono accepts %q",
+				name, v, AfUnixMediationModes)
+		}
+		if d.Linux == nil {
+			d.Linux = &Linux{}
+		}
+		if err := m.setScalar(&d.Linux.AfUnixMediation, v, "linux.af_unix_mediation", name); err != nil {
 			return err
 		}
 	}
