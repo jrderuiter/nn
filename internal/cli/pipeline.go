@@ -542,6 +542,11 @@ func baseProfile(n config.Nono) *nono.Profile {
 		// already grants the read. The predicate keeps the profile the same
 		// bytes on both platforms.
 		Groups: &nono.Groups{Include: []nono.CondName{nono.GWhen("linux_temp_read", "linux")}},
+		// On Linux, a socket lets the agent make a program outside the sandbox
+		// act for it, so a socket needs a grant unless the user turns this off.
+		// nono applies the key only on Linux, so the profile stays the same
+		// bytes on every platform.
+		Linux: &nono.Linux{AfUnixMediation: "pathname"},
 	}
 
 	p.Extends = append(p.Extends, n.Extends...)
