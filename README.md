@@ -213,6 +213,23 @@ files, then delegates enforcement to nono:
 Layers merge per key. A project file adds to a tool that the user file declares;
 it does not replace the tool.
 
+A later layer cannot delete a key, because TOML has no null. To remove a tool
+that an earlier layer declares, set `enabled = false` in its section:
+
+```toml
+[tools.github]
+enabled = false
+```
+
+The same key removes one named entry of a tool, such as one Kubernetes
+cluster. `nn` removes every table under `[tools]` that sets `enabled = false`
+after all layers merge, so the last layer that sets the key decides. The key is
+reserved: no tool uses `enabled` as a setting.
+
+To give one string setting its default back, set it to an empty string. This
+does not work for `secret` and the `kubernetes` key `auth`, which must not be
+empty.
+
 When the upward search does not find an `nn.toml`, `nn run` and `nn doctor` stop
 with an error. `nn init` writes an example file in the working directory.
 Running `nn init` in a subdirectory of an existing project does not create a
@@ -249,7 +266,8 @@ The variable naming a tool section enables that tool. For example,
 `NN_TOOLS_MISE=true` turns on the `mise` tool. A false value (`false`, `0`,
 `no`, `off`, or empty) removes the tool, allowing you to disable a project
 default for a single run. A true value never clears configuration that the
-section already carries.
+section already carries, and it turns on a tool that a file switched off with
+`enabled = false`.
 
 ### Secrets
 
@@ -650,6 +668,17 @@ nono picks a proxy route by the host of the API server. If two clusters use
 the same API server and one of them uses `"service-account"`, `nn` stops with
 an error. The `clusters` tables come from `nn.toml` only, because they have no
 spelling as one environment variable.
+
+To drop a cluster that an earlier file declares, set `enabled = false` in its
+table. For example, a machine that cannot reach `prod` can use this:
+
+```toml
+[tools.kubernetes.clusters.prod]
+enabled = false
+```
+
+If `current` names the cluster that you removed, set `current` to another
+cluster. With one cluster left, `current` defaults to it.
 
 ## Development
 
