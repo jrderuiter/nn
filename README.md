@@ -466,7 +466,8 @@ The `git` tool configures git commit identity and repository access:
 | `name` | Author and committer name inside the sandbox. |
 | `email` | Author and committer email address. |
 | `hosts` | Extra git server domains to allow. |
-| `config` | Allow reading the host git configuration file (default: `false`). |
+| `config` | Allow reading the host git configuration file (default: `true`). |
+| `worktree` | Grant the shared git directory of a linked worktree (default: `true`). |
 
 ```toml
 [tools.git]
@@ -475,6 +476,14 @@ email  = "jane@example.com"
 hosts  = ["git.example.com"]
 config = true
 ```
+
+A linked worktree, which `git worktree add` creates, keeps its objects, refs and
+configuration in the `.git` directory of the main repository. That directory is
+outside the working directory, so git fails in the sandbox without a grant. When
+the working directory is a linked worktree, nn passes `--allow <dir>` to nono
+for that `.git` directory. The grant is a flag and not a profile entry, because
+the path is different on each machine. nn does not grant the checkout of the
+main repository. Set `worktree = false` to turn the grant off.
 
 #### GitHub
 

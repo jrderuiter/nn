@@ -98,6 +98,11 @@ func caseOptions(t *testing.T, dir string) options {
 			}
 			return strings.Fields(string(body)), nil
 		},
+		// The case directories live in this repository, which may itself be
+		// a linked worktree, and the answer must not depend on that.
+		gitCommonDir: func(context.Context, string) (string, error) {
+			return "", nil
+		},
 	}
 }
 
