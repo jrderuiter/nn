@@ -1,0 +1,104 @@
+{
+  "$schema": "https://nono.sh/schemas/nono-profile.schema.json",
+  "groups": {
+    "include": [
+      {
+        "name": "linux_temp_read",
+        "when": "linux"
+      }
+    ]
+  },
+  "filesystem": {
+    "allow": [
+      "$WORKDIR/.nono/nn"
+    ]
+  },
+  "network": {
+    "allow_domain": [
+      "ABCDEF.gr7.eu-west-1.eks.amazonaws.com",
+      "GHIJKL.gr7.eu-west-1.eks.amazonaws.com"
+    ],
+    "credentials": [
+      "k8s_prod",
+      "k8s_staging_eks"
+    ],
+    "open_port": [
+      6550
+    ],
+    "custom_credentials": {
+      "k8s_prod": {
+        "upstream": "https://ABCDEF.gr7.eu-west-1.eks.amazonaws.com",
+        "credential_key": "cmd://k8s_prod",
+        "env_var": "K8S_TOKEN_PROD",
+        "inject_mode": "header",
+        "inject_header": "Authorization",
+        "credential_format": "Bearer {}",
+        "tls_ca": "$WORKDIR/.nono/nn/kube/ca-prod.pem"
+      },
+      "k8s_staging_eks": {
+        "upstream": "https://GHIJKL.gr7.eu-west-1.eks.amazonaws.com",
+        "credential_key": "cmd://k8s_staging_eks",
+        "env_var": "K8S_TOKEN_STAGING_EKS",
+        "inject_mode": "header",
+        "inject_header": "Authorization",
+        "credential_format": "Bearer {}",
+        "tls_ca": "$WORKDIR/.nono/nn/kube/ca-staging-eks.pem"
+      }
+    }
+  },
+  "environment": {
+    "allow_vars": [
+      "PATH",
+      "HOME",
+      "USER",
+      "SHELL",
+      "TERM",
+      "LANG",
+      "LC_*",
+      "TMPDIR"
+    ],
+    "set_vars": {
+      "KUBECACHEDIR": "$WORKDIR/.nono/nn/kube/cache",
+      "KUBECONFIG": "$WORKDIR/.nono/nn/kube/config"
+    }
+  },
+  "workdir": {
+    "access": "readwrite"
+  },
+  "credential_capture": {
+    "k8s_prod": {
+      "command": [
+        "/usr/local/bin/kubectl",
+        "--kubeconfig",
+        "/TESTDIR/kubeconfig.yaml",
+        "--context",
+        "prod-eks",
+        "create",
+        "token",
+        "claude-ro",
+        "-n",
+        "apps",
+        "--duration=1h"
+      ],
+      "timeout_secs": 30,
+      "cache_ttl_secs": 2880
+    },
+    "k8s_staging_eks": {
+      "command": [
+        "/usr/local/bin/kubectl",
+        "--kubeconfig",
+        "/TESTDIR/kubeconfig.yaml",
+        "--context",
+        "staging",
+        "create",
+        "token",
+        "claude-ro",
+        "-n",
+        "default",
+        "--duration=30m"
+      ],
+      "timeout_secs": 30,
+      "cache_ttl_secs": 1440
+    }
+  }
+}

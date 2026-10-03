@@ -2,6 +2,7 @@ package kubernetes
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -149,11 +150,11 @@ func mustAbs(t *testing.T, p string) string {
 }
 
 func TestProxyRouteUsesAnAbsoluteCAPath(t *testing.T) {
-	p := &provider{
-		cfg: Config{Context: "prod-eks", ServiceAccount: "ro", ServiceAccountNamespace: "apps",
+	p := single(&target{
+		cfg: Cluster{Auth: authServiceAccount, Context: "prod-eks", ServiceAccount: "ro", ServiceAccountNamespace: "apps",
 			TokenTTL: "1h", Kubectl: "/usr/local/bin/kubectl", Kubeconfig: mustAbs(t, fixture)},
 		ttl: time.Hour,
-	}
+	})
 	env := &tool.Env{
 		Workdir: "/w", ArtifactDir: "/w/.nono/nn", HomeDir: "/h",
 		Lookup: func(string) (string, bool) { return "", false },
@@ -204,8 +205,8 @@ func TestResolveKubectlTakesAnAbsolutePathAsGiven(t *testing.T) {
 
 // The command nono runs must name a binary by absolute path.
 func TestTokenCommandUsesTheResolvedBinary(t *testing.T) {
-	p := &provider{
-		cfg: Config{Context: "prod-eks", ServiceAccount: "ro", ServiceAccountNamespace: "apps",
+	p := &target{
+		cfg: Cluster{Context: "prod-eks", ServiceAccount: "ro", ServiceAccountNamespace: "apps",
 			TokenTTL: "1h", Kubectl: "kubectl"},
 		kubectl: "/opt/homebrew/bin/kubectl",
 		ttl:     time.Hour,
@@ -232,15 +233,15 @@ func TestServiceAccountNamespaceDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := p.(*provider).cfg.ServiceAccountNamespace
+	got := p.(*provider).targets[0].cfg.ServiceAccountNamespace
 	if got != "default" {
 		t.Fatalf("got %q, want default", got)
 	}
 }
 
 func TestServiceAccountNamespaceIsUsedForTheToken(t *testing.T) {
-	p := &provider{
-		cfg: Config{ServiceAccount: "ro", ServiceAccountNamespace: "agent-access",
+	p := &target{
+		cfg: Cluster{ServiceAccount: "ro", ServiceAccountNamespace: "agent-access",
 			TokenTTL: "1h", Kubectl: "kubectl"},
 		kubectl: "/opt/homebrew/bin/kubectl",
 		ttl:     time.Hour,
@@ -249,6 +250,12 @@ func TestServiceAccountNamespaceIsUsedForTheToken(t *testing.T) {
 	if !strings.Contains(got, "-n agent-access") {
 		t.Fatalf("the token must be minted in the account's namespace, got %s", got)
 	}
+}
+
+// single wraps one target the way New builds the single cluster form.
+func single(t *target) *provider {
+	t.route, t.tokenEnv, t.caFile = routeName, tokenEnv, "ca.pem"
+	return &provider{targets: []*target{t}}
 }
 
 func newFromTOML(t *testing.T, body string) (tool.Provider, error) {
@@ -291,8 +298,8 @@ func TestAuthHostNeedsNoAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.(*provider).cfg.Auth != authHost {
-		t.Fatalf("got auth %q", p.(*provider).cfg.Auth)
+	if p.(*provider).targets[0].cfg.Auth != authHost {
+		t.Fatalf("got auth %q", p.(*provider).targets[0].cfg.Auth)
 	}
 }
 
@@ -335,7 +342,7 @@ users:
 	if err := os.WriteFile(host, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	p := &provider{cfg: Config{Auth: authHost, Kubeconfig: host}}
+	p := single(&target{cfg: Cluster{Auth: authHost, Kubeconfig: host}})
 	r, err := p.Build(context.Background(), &tool.Env{
 		Workdir: "/w", ArtifactDir: "/w/.nono/nn", HomeDir: "/h",
 		Lookup: func(string) (string, bool) { return "", false },
@@ -402,5 +409,134 @@ func TestDialLoopbackRewritesTheUnspecifiedAddress(t *testing.T) {
 	kept := dialLoopback(cluster{Server: "https://0.0.0.0:6550", TLSServerName: "k3d"})
 	if kept.TLSServerName != "k3d" {
 		t.Errorf("an explicit tls-server-name must stay, got %q", kept.TLSServerName)
+	}
+}
+
+func TestClustersNeedCurrentWhenThereAreSeveral(t *testing.T) {
+	_, err := newFromTOML(t, "[tools.kubernetes.clusters.a]\nauth = \"host\"\n"+
+		"[tools.kubernetes.clusters.b]\nauth = \"host\"\n")
+	if err == nil || !strings.Contains(err.Error(), "current is required") {
+		t.Fatalf("got: %v", err)
+	}
+}
+
+func TestClustersRejectAnUnknownCurrent(t *testing.T) {
+	_, err := newFromTOML(t, "current = \"c\"\n[tools.kubernetes.clusters.a]\nauth = \"host\"\n")
+	if err == nil || !strings.Contains(err.Error(), `current "c" is not a cluster`) {
+		t.Fatalf("got: %v", err)
+	}
+}
+
+func TestOneClusterIsCurrentByDefault(t *testing.T) {
+	p, err := newFromTOML(t, "[tools.kubernetes.clusters.a]\nauth = \"host\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.(*provider).current; got != "a" {
+		t.Fatalf("got current %q", got)
+	}
+}
+
+// A key that picks a cluster would silently apply to every cluster at the top.
+func TestClustersRejectTopLevelAuth(t *testing.T) {
+	_, err := newFromTOML(t, "auth = \"host\"\n[tools.kubernetes.clusters.a]\nauth = \"host\"\n")
+	if err == nil || !strings.Contains(err.Error(), "auth belongs in each") {
+		t.Fatalf("got: %v", err)
+	}
+}
+
+func TestClusterErrorsNameTheCluster(t *testing.T) {
+	_, err := newFromTOML(t, "[tools.kubernetes.clusters.a]\nauth = \"service-account\"\n")
+	if err == nil || !strings.Contains(err.Error(), `cluster "a": auth "service-account" needs service_account`) {
+		t.Fatalf("got: %v", err)
+	}
+}
+
+func TestClustersInheritTheSharedSettings(t *testing.T) {
+	p, err := newFromTOML(t, "kubectl = \"/k\"\nservice_account_namespace = \"apps\"\ntoken_ttl = \"2h\"\n"+
+		"[tools.kubernetes.clusters.a]\nauth = \"service-account\"\nservice_account = \"ro\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := p.(*provider).targets[0].cfg
+	if c.Kubectl != "/k" || c.ServiceAccountNamespace != "apps" || c.TokenTTL != "2h" {
+		t.Fatalf("got %+v", c)
+	}
+}
+
+func TestClusterNamesMustStayDistinctAsRoutes(t *testing.T) {
+	_, err := newFromTOML(t, "current = \"a-b\"\n[tools.kubernetes.clusters.a-b]\nauth = \"host\"\n"+
+		"[tools.kubernetes.clusters.a_b]\nauth = \"host\"\n")
+	if err == nil || !strings.Contains(err.Error(), "would share the route") {
+		t.Fatalf("got: %v", err)
+	}
+}
+
+func TestClusterNamesAreLimited(t *testing.T) {
+	_, err := newFromTOML(t, "[tools.kubernetes.clusters.\"a.b\"]\nauth = \"host\"\n")
+	if err == nil || !strings.Contains(err.Error(), "a name holds only") {
+		t.Fatalf("got: %v", err)
+	}
+}
+
+func testEnv() *tool.Env {
+	return &tool.Env{
+		Workdir: "/w", ArtifactDir: "/w/.nono/nn", HomeDir: "/h",
+		Lookup: func(string) (string, bool) { return "", false },
+	}
+}
+
+// nono picks a route by host, so a token would reach the wrong cluster.
+func TestClustersRejectASharedAPIServer(t *testing.T) {
+	body := fmt.Sprintf("kubeconfig = %q\nkubectl = \"/usr/local/bin/kubectl\"\ncurrent = \"a\"\n"+
+		"[tools.kubernetes.clusters.a]\nauth = \"service-account\"\ncontext = \"prod-eks\"\nservice_account = \"ro\"\n"+
+		"[tools.kubernetes.clusters.b]\nauth = \"service-account\"\ncontext = \"prod-eks\"\nservice_account = \"admin\"\n",
+		mustAbs(t, fixture))
+	p, err := newFromTOML(t, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Build(context.Background(), testEnv()); err == nil || !strings.Contains(err.Error(), "both use the API server") {
+		t.Fatalf("got: %v", err)
+	}
+}
+
+func TestClustersShareOneKubeconfig(t *testing.T) {
+	body := fmt.Sprintf("kubeconfig = %q\nkubectl = \"/usr/local/bin/kubectl\"\ncurrent = \"local\"\n"+
+		"[tools.kubernetes.clusters.prod]\nauth = \"service-account\"\ncontext = \"prod-eks\"\nservice_account = \"ro\"\n"+
+		"[tools.kubernetes.clusters.local]\nauth = \"host\"\ncontext = \"local\"\n",
+		mustAbs(t, fixture))
+	p, err := newFromTOML(t, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := p.Build(context.Background(), testEnv())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg []byte
+	paths := map[string]bool{}
+	for _, a := range r.Artifacts {
+		paths[a.RelPath] = true
+		if a.RelPath == "kube/config" {
+			cfg = a.Content
+		}
+	}
+	if !paths["kube/ca-prod.pem"] {
+		t.Fatalf("each cluster gets its own CA file, got %v", paths)
+	}
+	var kc kubeconfig
+	if err := yaml.Unmarshal(cfg, &kc); err != nil {
+		t.Fatal(err)
+	}
+	if kc.CurrentContext != "local" || len(kc.Contexts) != 2 || kc.Contexts[0].Name != "local" || kc.Contexts[1].Name != "prod" {
+		t.Fatalf("the kubeconfig must hold both contexts and select current:\n%s", cfg)
+	}
+	if !strings.Contains(string(cfg), "K8S_TOKEN_PROD") || !strings.Contains(string(cfg), "local-static-token") {
+		t.Fatalf("each user must keep its own credential:\n%s", cfg)
+	}
+	n := r.Fragment.Network
+	if len(n.Credentials) != 1 || n.Credentials[0] != "k8s_prod" || len(n.OpenPort) != 1 || n.OpenPort[0] != 6443 {
+		t.Fatalf("got %+v", n)
 	}
 }

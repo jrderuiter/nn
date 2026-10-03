@@ -1,0 +1,20 @@
+[tools.kubernetes]
+kubeconfig = "kubeconfig.yaml"
+kubectl = "/usr/local/bin/kubectl"
+current = "local"
+
+[tools.kubernetes.clusters.prod]
+auth = "service-account"
+context = "prod-eks"
+service_account = "claude-ro"
+service_account_namespace = "apps"
+
+[tools.kubernetes.clusters.staging-eks]
+auth = "service-account"
+context = "staging"
+service_account = "claude-ro"
+token_ttl = "30m"
+
+[tools.kubernetes.clusters.local]
+auth = "host"
+context = "k3d-dev"
