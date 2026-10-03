@@ -340,20 +340,14 @@ the `ssh-agent` socket, add its path to `filesystem.unix_socket` in the
 
 ### Running inside herdr
 
-herdr is a terminal multiplexer for coding agents. It sets `HERDR_ENV=1` in each
-pane. When nn sees that value, it changes two things.
+herdr is a terminal multiplexer for coding agents. In a herdr pane, nn works
+with two herdr features without extra configuration:
 
-First, nn stays in front of nono. It starts nono as a child process and waits
-for it, instead of replacing itself with nono. herdr finds the agent of a pane
-by reading `HERDR_AGENT` from the leader of the foreground process group. If
-nono is the leader, Linux hides that variable from herdr. nn passes SIGTERM and SIGHUP
-on to nono, and exits with the exit code of nono.
+- herdr shows the agent that runs in the pane, for example Claude.
+- A hook inside the sandbox can read `HERDR_PANE_ID` to find its pane.
 
-Second, nn adds `HERDR_PANE_ID` to `environment.allow_vars`. A hook inside the
-sandbox, such as a Claude Code `SessionStart` hook, can then name its pane. nn
-adds the variable only to a list that exists, because without a list nono
-passes every variable already. Other herdr variables stay out, because with
-`HERDR_SOCKET_PATH` a hook can reach the full herdr API.
+nn does not let the other herdr variables into the sandbox. With them, the
+agent can control herdr.
 
 ## Configuration reference
 
