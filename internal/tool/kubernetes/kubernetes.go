@@ -139,9 +139,18 @@ func init() {
 }
 
 func New(md toml.MetaData, prim toml.Primitive) (tool.Provider, error) {
-	cfg := Config{TokenTTL: "1h", Kubectl: "kubectl", ServiceAccountNamespace: "default"}
+	var cfg Config
 	if err := md.PrimitiveDecode(prim, &cfg); err != nil {
 		return nil, err
+	}
+	// The defaults apply after the decode, so an empty value means the
+	// default. A later layer cannot delete a key, and an empty string is how
+	// it hands a setting back.
+	if cfg.TokenTTL == "" {
+		cfg.TokenTTL = "1h"
+	}
+	if cfg.Kubectl == "" {
+		cfg.Kubectl = "kubectl"
 	}
 	if cfg.ServiceAccountNamespace == "" {
 		cfg.ServiceAccountNamespace = "default"
