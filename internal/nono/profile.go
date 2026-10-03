@@ -23,6 +23,7 @@ type Profile struct {
 	Network           *Network                     `json:"network,omitempty"`
 	Environment       *Environment                 `json:"environment,omitempty"`
 	Workdir           *Workdir                     `json:"workdir,omitempty"`
+	Linux             *Linux                       `json:"linux,omitempty"`
 	CredentialCapture map[string]CredentialCapture `json:"credential_capture,omitempty"`
 }
 
@@ -118,6 +119,17 @@ type Environment struct {
 type Workdir struct {
 	Access string `json:"access,omitempty"`
 }
+
+// Linux holds the hardening controls that only apply on Linux.
+type Linux struct {
+	// AfUnixMediation is "pathname" to make a connect or bind on a pathname
+	// Unix socket need a filesystem.unix_socket grant, or "off".
+	AfUnixMediation string `json:"af_unix_mediation,omitempty"`
+}
+
+// AfUnixMediationModes lists the values that nono accepts for
+// linux.af_unix_mediation.
+var AfUnixMediationModes = []string{"off", "pathname"}
 
 // Domain is either a bare hostname or an object carrying endpoint rules.
 type Domain struct {
