@@ -103,6 +103,8 @@ func caseOptions(t *testing.T, dir string) options {
 		gitCommonDir: func(context.Context, string) (string, error) {
 			return "", nil
 		},
+		// The tests may run inside a herdr pane themselves.
+		getenv: func(string) string { return "" },
 	}
 }
 

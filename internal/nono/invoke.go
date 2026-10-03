@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"runtime"
 	"sort"
 	"strings"
@@ -150,23 +151,134 @@ func Env(workdir, agent string, extra []string) []string {
 // Exec replaces the current process with nono. Handing the terminal straight
 // over gives correct signal delivery and the real exit code, and leaves no nn
 // process in the tree.
+//
+// Inside a herdr pane, nn starts nono as a child instead, and exits with its
+// status. See InHerdr for why.
 func Exec(args []string, env []string) error {
-	path, err := LookPath()
+	code, err := launch(args, env)
 	if err != nil {
 		return err
 	}
-	if runtime.GOOS == "windows" {
-		cmd := exec.Command(path, args...)
-		cmd.Env = env
-		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-		if err := cmd.Run(); err != nil {
-			var ee *exec.ExitError
-			if errors.As(err, &ee) {
-				os.Exit(ee.ExitCode())
-			}
-			return err
-		}
+	os.Exit(code)
+	return nil
+}
+
+// launch runs nono and returns its exit status. With syscall.Exec it returns
+// only on failure.
+func launch(args []string, env []string) (int, error) {
+	path, err := LookPath()
+	if err != nil {
+		return 0, err
+	}
+	if runtime.GOOS == "windows" || InHerdr() {
+		return runChild(path, args, env)
+	}
+	return 0, syscall.Exec(path, append([]string{Binary}, args...), env)
+}
+
+// InHerdr says whether nn runs in a herdr pane.
+//
+// herdr finds the agent of a pane by reading HERDR_AGENT from the environ
+// file of the foreground process group leader. nono's supervisor makes itself
+// undumpable, and Linux then hides that file from other processes. So in a
+// herdr pane nn stays in front of nono as the group leader, and carries
+// HERDR_AGENT in its own environment.
+func InHerdr() bool {
+	return os.Getenv("HERDR_ENV") == "1"
+}
+
+// ExecWithAgent makes sure that the environment nn started with names the
+// agent, because herdr reads the environ file, and os.Setenv does not change
+// it. When the value is wrong, nn replaces itself with a copy that has the
+// right one, and the copy finds nothing left to change. Outside herdr it does
+// nothing.
+//
+// Call it before secrets are resolved, so a backend that asks for a touch asks
+// once, and no secret lands in the environment of nn.
+func ExecWithAgent(agent string) error {
+	if runtime.GOOS == "windows" || !InHerdr() {
 		return nil
 	}
-	return syscall.Exec(path, append([]string{Binary}, args...), env)
+	env, changed := withAgent(os.Environ(), agent)
+	if !changed {
+		return nil
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("find the nn executable: %w", err)
+	}
+	return syscall.Exec(exe, os.Args, env)
+}
+
+// withAgent sets HERDR_AGENT in environ to agent, or removes it when agent is
+// empty. It reports whether that changed anything.
+func withAgent(environ []string, agent string) ([]string, bool) {
+	out := make([]string, 0, len(environ)+1)
+	found := false
+	changed := false
+	for _, kv := range environ {
+		name, value, _ := strings.Cut(kv, "=")
+		if name != "HERDR_AGENT" {
+			out = append(out, kv)
+			continue
+		}
+		if found || agent == "" || value != agent {
+			changed = true
+			continue
+		}
+		found = true
+		out = append(out, kv)
+	}
+	if agent != "" && !found {
+		out = append(out, "HERDR_AGENT="+agent)
+		changed = true
+	}
+	return out, changed
+}
+
+// runChild runs nono as a child process and returns its exit status, with
+// 128 plus the signal number when a signal killed it.
+//
+// nono shares the process group of the terminal, so SIGINT and SIGQUIT from
+// the terminal reach it directly. nn catches them and drops them, so that it
+// outlives nono. signal.Ignore would not do: an ignored signal stays ignored
+// in the child after exec. SIGTERM and SIGHUP come from outside the group, so
+// nn passes them on.
+func runChild(path string, args []string, env []string) (int, error) {
+	cmd := exec.Command(path, args...)
+	cmd.Args[0] = Binary
+	cmd.Env = env
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+
+	sigs := make(chan os.Signal, 4)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(sigs)
+
+	if err := cmd.Start(); err != nil {
+		return 0, err
+	}
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		for {
+			select {
+			case s := <-sigs:
+				if s == syscall.SIGTERM || s == syscall.SIGHUP {
+					_ = cmd.Process.Signal(s)
+				}
+			case <-done:
+				return
+			}
+		}
+	}()
+
+	err := cmd.Wait()
+	var ee *exec.ExitError
+	if err != nil && !errors.As(err, &ee) {
+		return 0, err
+	}
+	if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		return 128 + int(ws.Signal()), nil
+	}
+	return cmd.ProcessState.ExitCode(), nil
 }

@@ -334,6 +334,17 @@ If a program in the sandbox then stops working because it needs a socket, such
 as `ssh-agent`, add the socket path to `filesystem.unix_socket` in the
 `[nono.profile]` block.
 
+### Running inside herdr
+
+herdr is a terminal multiplexer for coding agents. In a herdr pane, nn works
+with two herdr features without extra configuration:
+
+- herdr shows the agent that runs in the pane, for example Claude.
+- A hook inside the sandbox can read `HERDR_PANE_ID` to find its pane.
+
+nn does not let the other herdr variables into the sandbox. With them, the
+agent can control herdr.
+
 ## Configuration reference
 
 ### Full example
