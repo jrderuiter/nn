@@ -103,6 +103,12 @@ func example() string {
 		p("# [tools.%s]", name)
 	}
 	p("")
+	p("# mise, which has one setting.")
+	p("# [tools.mise]")
+	p("# Trust the mise.toml in the working directory, inside the sandbox only.")
+	p("# A new git worktree is not trusted, because mise trusts a file by its path.")
+	p("# trust_workdir = true")
+	p("")
 	p("[tools.git]")
 	p("# The committer identity inside the sandbox.")
 	p("name = \"Your Name\"")

@@ -21,6 +21,13 @@ import (
 // so declaring the tool at all is what turns it on.
 type Config struct{}
 
+// MiseConfig is the [tools.mise] table, the one runtime with a setting.
+type MiseConfig struct {
+	// TrustWorkdir makes mise trust the configuration files in the working
+	// directory, inside the sandbox only.
+	TrustWorkdir bool `toml:"trust_workdir"`
+}
+
 // spec describes what a tool needs on top of its nono group.
 type spec struct {
 	// group is the nono policy group that grants the read-only parts.
@@ -75,17 +82,33 @@ var specs = map[string]spec{
 
 func init() {
 	for name := range specs {
-		tool.Register(name, factoryFor(name), func() any { return &Config{} })
+		proto := func() any { return &Config{} }
+		if name == "mise" {
+			proto = func() any { return &MiseConfig{} }
+		}
+		tool.Register(name, factoryFor(name), proto)
 	}
 }
 
 func factoryFor(name string) tool.Factory {
 	return func(md toml.MetaData, prim toml.Primitive) (tool.Provider, error) {
-		var cfg Config
+		p := &provider{name: name, spec: specs[name]}
+		if name != "mise" {
+			var cfg Config
+			return p, md.PrimitiveDecode(prim, &cfg)
+		}
+		var cfg MiseConfig
 		if err := md.PrimitiveDecode(prim, &cfg); err != nil {
 			return nil, err
 		}
-		return &provider{name: name, spec: specs[name]}, nil
+		// mise trusts a configuration file by its path, so a fresh worktree
+		// is untrusted even when its repository is trusted. The value is
+		// expanded by nono, so the profile stays portable. The trust reaches
+		// only the sandbox: the host mise state does not change.
+		if cfg.TrustWorkdir {
+			p.setVars = map[string]string{"MISE_TRUSTED_CONFIG_PATHS": "$WORKDIR"}
+		}
+		return p, nil
 	}
 }
 
@@ -100,8 +123,9 @@ func Names() []string {
 }
 
 type provider struct {
-	name string
-	spec spec
+	name    string
+	spec    spec
+	setVars map[string]string
 }
 
 func (p *provider) Name() string { return p.name }
@@ -121,8 +145,8 @@ func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error)
 			f.Filesystem.Allow = append(f.Filesystem.Allow, nono.P(a))
 		}
 	}
-	if len(p.spec.allowVars) > 0 {
-		f.Environment = &nono.Environment{AllowVars: p.spec.allowVars}
+	if len(p.spec.allowVars) > 0 || len(p.setVars) > 0 {
+		f.Environment = &nono.Environment{AllowVars: p.spec.allowVars, SetVars: p.setVars}
 	}
 	return &tool.Result{Fragment: f, EnsureDirs: p.spec.allow}, nil
 }

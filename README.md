@@ -457,6 +457,22 @@ section turns the runtime on:
 Each runtime includes its corresponding nono group and configures writable cache
 and state directories under the project or user cache.
 
+The `mise` tool has one setting:
+
+| Key | Description |
+| --- | --- |
+| `trust_workdir` | Trust the mise configuration files in the working directory, inside the sandbox only (default: `false`). |
+
+mise trusts a configuration file by its path. A new git worktree is a new path,
+so mise refuses its `mise.toml` even when you trust the main repository. With
+`trust_workdir = true`, nn sets `MISE_TRUSTED_CONFIG_PATHS` to `$WORKDIR` in the
+sandbox. The trust state of mise on the host does not change.
+
+```toml
+[tools.mise]
+trust_workdir = true
+```
+
 #### Git
 
 The `git` tool configures git commit identity and repository access:

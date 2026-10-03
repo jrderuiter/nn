@@ -2,6 +2,7 @@
 extends = ["nolabs-ai/claude"]
 
 [tools.mise]
+trust_workdir = true
 
 [tools.git]
 name = "Test User"
