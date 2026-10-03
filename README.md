@@ -314,6 +314,26 @@ Lists behave differently. The block adds its entries to the list that the tools
 built; it cannot remove an entry. To restrict access, write a deny rule, such as
 `filesystem.deny`, `network.deny_domain`, or `environment.deny_vars`.
 
+#### Unix sockets on Linux
+
+On Linux, an agent in the sandbox can talk to programs on your machine through
+their Unix sockets. A Unix socket is a file that a local program listens on.
+Through it, the agent can make that program act outside the sandbox, for
+example to control your terminal sessions.
+
+To block this, add this block to `nn.toml`:
+
+```toml
+[nono.profile.linux]
+af_unix_mediation = "pathname"
+```
+
+The setting has no effect on macOS, so you can share it with macOS users.
+
+If a program in the sandbox then stops working because it needs a socket, such
+as `ssh-agent`, add the socket path to `filesystem.unix_socket` in the
+`[nono.profile]` block.
+
 ## Configuration reference
 
 ### Full example
