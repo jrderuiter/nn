@@ -316,26 +316,22 @@ built; it cannot remove an entry. To restrict access, write a deny rule, such as
 
 #### Unix sockets on Linux
 
-A Unix socket is a file through which a local service takes requests. On Linux,
-a sandboxed process can connect to any Unix socket that it can reach on the file
-system. The service on the other side then acts outside the sandbox. For
-example, an agent that connects to the herdr session socket can drive panes
-outside the sandbox.
+On Linux, an agent in the sandbox can talk to programs on your machine through
+their Unix sockets. A Unix socket is a file that a local program listens on.
+Through it, the agent can make that program act outside the sandbox, for
+example to control your terminal sessions.
 
-To block this, set `linux.af_unix_mediation` to `"pathname"`:
+To block this, add this block to `nn.toml`:
 
 ```toml
 [nono.profile.linux]
 af_unix_mediation = "pathname"
 ```
 
-With this value, nono blocks a connect or a bind on a socket path, unless a
-`filesystem.unix_socket` rule grants that path. The value `"off"` keeps the
-default behavior. nono applies the key only on Linux, so you can keep it in a
-configuration that you share with macOS users.
+The setting has no effect on macOS, so you can share it with macOS users.
 
-No tool grants a socket yet. If a program in the sandbox needs a socket, such as
-the `ssh-agent` socket, add its path to `filesystem.unix_socket` in the
+If a program in the sandbox then stops working because it needs a socket, such
+as `ssh-agent`, add the socket path to `filesystem.unix_socket` in the
 `[nono.profile]` block.
 
 ## Configuration reference
