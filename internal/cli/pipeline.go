@@ -97,6 +97,18 @@ type options struct {
 	gitCommonDir func(ctx context.Context, dir string) (string, error)
 	// goos is the platform that decides the trust flag. Empty means this one.
 	goos string
+	// getenv reads the host environment for the settings that are not tool
+	// configuration. Nil means os.Getenv.
+	getenv func(string) string
+}
+
+// inHerdr says whether nn runs in a herdr pane.
+func (o options) inHerdr() bool {
+	getenv := o.getenv
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	return getenv("HERDR_ENV") == "1"
 }
 
 // warnf writes one line to the warning stream.
@@ -284,6 +296,10 @@ func build(ctx context.Context, opts options, command []string) (*plan, error) {
 		}
 	}
 
+	if opts.inHerdr() {
+		allowHerdrPane(m.Profile())
+	}
+
 	if n := m.Profile().Network; n != nil && len(n.CustomCredentials) > 0 && trustsTheProxyCA(opts.goos) {
 		extra = append(extra, "--trust-proxy-ca")
 	}
@@ -294,6 +310,26 @@ func build(ctx context.Context, opts options, command []string) (*plan, error) {
 		secrets: secretRefs, ensureDirs: ensure, extraArgs: extra, command: command,
 		opts: opts, agent: agent,
 	}, nil
+}
+
+// allowHerdrPane lets HERDR_PANE_ID into the sandbox, so a hook inside it can
+// name its pane.
+//
+// It only extends a list that exists. Without one, nono passes every variable
+// already, and a list of only this name would strip all the others. It uses
+// allow_vars rather than set_vars, because the profile file is shared by every
+// pane in the project. HERDR_ENV and HERDR_SOCKET_PATH stay out: with them,
+// herdr's own hook reaches for the herdr socket, which is its full API.
+func allowHerdrPane(p *nono.Profile) {
+	if p.Environment == nil || len(p.Environment.AllowVars) == 0 {
+		return
+	}
+	for _, v := range p.Environment.AllowVars {
+		if v == "HERDR_PANE_ID" {
+			return
+		}
+	}
+	p.Environment.AllowVars = append(p.Environment.AllowVars, "HERDR_PANE_ID")
 }
 
 // selectAgent picks the [agents.<name>] section for a run. The --agent flag
