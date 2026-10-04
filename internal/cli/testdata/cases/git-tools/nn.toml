@@ -1,5 +1,5 @@
 [nono]
-extends = ["jr/clean_env"]
+extends = ["default"]
 groups = ["unlink_protection"]
 
 [tools.mise]

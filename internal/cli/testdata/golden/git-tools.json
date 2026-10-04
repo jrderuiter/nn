@@ -1,7 +1,7 @@
 {
   "$schema": "https://nono.sh/schemas/nono-profile.schema.json",
   "extends": [
-    "jr/clean_env"
+    "default"
   ],
   "groups": {
     "include": [

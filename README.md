@@ -357,7 +357,7 @@ Here is a full `nn.toml` that demonstrates the available sections:
 
 ```toml
 [nono]
-extends = ["jr/clean_env"]
+extends = ["default"]
 groups  = ["unlink_protection"]
 network_profile = "minimal"
 allow_domain = ["proxy.golang.org"]
