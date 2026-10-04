@@ -239,6 +239,19 @@ func TestServiceAccountNamespaceDefaults(t *testing.T) {
 	}
 }
 
+// A later layer cannot delete a key, so an empty value must mean the default
+// rather than fail on an empty duration or binary name.
+func TestEmptyValuesMeanTheDefaults(t *testing.T) {
+	p, err := newFromTOML(t, "auth = \"host\"\ntoken_ttl = \"\"\nkubectl = \"\"\nservice_account_namespace = \"\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := p.(*provider).targets[0].cfg
+	if c.TokenTTL != "1h" || c.Kubectl != "kubectl" || c.ServiceAccountNamespace != "default" {
+		t.Fatalf("got %+v", c)
+	}
+}
+
 func TestServiceAccountNamespaceIsUsedForTheToken(t *testing.T) {
 	p := &target{
 		cfg: Cluster{ServiceAccount: "ro", ServiceAccountNamespace: "agent-access",

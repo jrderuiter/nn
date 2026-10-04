@@ -229,6 +229,110 @@ func TestEnvEnableKeepsExistingSettings(t *testing.T) {
 	}
 }
 
+// A later layer cannot delete a table, so enabled = false is how it drops a
+// tool that an earlier layer declares.
+func TestEnabledFalseRemovesATool(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "xdg"))
+	write(t, filepath.Join(root, "xdg", "nn", "config.toml"), "[tools.github]\nsecret = \"MY_TOKEN\"\n")
+	write(t, filepath.Join(root, "project", "nn.toml"), "[tools.github]\nenabled = false\n\n[tools.mise]\n")
+	cfg, err := Load(Options{Dir: filepath.Join(root, "project")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg.Tools["github"]; ok {
+		t.Fatal("enabled = false should have removed the tool")
+	}
+	if _, ok := cfg.Tools["mise"]; !ok {
+		t.Fatal("a tool without the switch must stay")
+	}
+}
+
+// The same switch drops one named entry of a tool, such as a cluster that
+// this machine cannot reach, and leaves the rest of the tool alone.
+func TestEnabledFalseRemovesANamedEntry(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, "nn.toml"), "[tools.kubernetes]\ntoken_ttl = \"30m\"\n\n"+
+		"[tools.kubernetes.clusters.dev]\nauth = \"host\"\n\n"+
+		"[tools.kubernetes.clusters.prod]\nauth = \"host\"\nenabled = false\n")
+	cfg, err := Load(Options{Dir: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var k map[string]any
+	md := cfg.Meta()
+	if err := md.PrimitiveDecode(cfg.Tools["kubernetes"], &k); err != nil {
+		t.Fatal(err)
+	}
+	clusters, _ := k["clusters"].(map[string]any)
+	if _, ok := clusters["prod"]; ok {
+		t.Fatalf("enabled = false should have removed the cluster, got %v", clusters)
+	}
+	if _, ok := clusters["dev"]; !ok || k["token_ttl"] != "30m" {
+		t.Fatalf("the rest of the tool must stay, got %v", k)
+	}
+}
+
+// A provider never sees the switch, so no tool has to accept the key.
+func TestEnabledTrueIsDropped(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, "nn.toml"), "[tools.github]\nenabled = true\nsecret = \"MY_TOKEN\"\n")
+	cfg, err := Load(Options{Dir: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var g map[string]any
+	md := cfg.Meta()
+	if err := md.PrimitiveDecode(cfg.Tools["github"], &g); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := g[EnabledKey]; ok || g["secret"] != "MY_TOKEN" {
+		t.Fatalf("got %v", g)
+	}
+}
+
+func TestEnabledMustBeABool(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, "nn.toml"), "[tools.github]\nenabled = \"no\"\n")
+	_, err := Load(Options{Dir: root})
+	if err == nil || !strings.Contains(err.Error(), "tools.github.enabled") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+// The environment applies last, so a true value turns back on a tool that a
+// file switched off, with the settings that the file wrote.
+func TestEnvEnableOverridesEnabledFalse(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, "nn.toml"), "[tools.github]\nsecret = \"MY_TOKEN\"\nenabled = false\n")
+	t.Setenv("NN_TOOLS_GITHUB", "true")
+	cfg, err := Load(Options{Dir: root, Keys: testKeys})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var g struct {
+		Secret string `toml:"secret"`
+	}
+	md := cfg.Meta()
+	if err := md.PrimitiveDecode(cfg.Tools["github"], &g); err != nil {
+		t.Fatal(err)
+	}
+	if g.Secret != "MY_TOKEN" {
+		t.Fatalf("the variable should have turned the tool back on, got %q", g.Secret)
+	}
+}
+
+// The variable a user would guess from enabled = true is not read, so it must
+// fail rather than leave the tool as it was.
+func TestEnvEnabledVariableIsAnError(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("NN_TOOLS_GITHUB_ENABLED", "true")
+	_, err := Load(Options{Dir: root, Keys: testKeys})
+	if err == nil || !strings.Contains(err.Error(), "NN_TOOLS_GITHUB_ENABLED") {
+		t.Fatalf("got %v", err)
+	}
+}
+
 func TestEnvLeavesUnsetKeysAlone(t *testing.T) {
 	root := t.TempDir()
 	write(t, filepath.Join(root, "nn.toml"), "[nono]\nnetwork_profile = \"claude-code\"\n")

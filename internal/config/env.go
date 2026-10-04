@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strings"
 )
@@ -24,8 +25,17 @@ func envName(path string) string {
 // Parsing cannot work: NN_NONO_NETWORK_PROFILE would be ambiguous between
 // nono.network_profile and nono.network.profile, and only the schema settles
 // it.
-func applyEnv(dst map[string]any, keys []Key) {
+func applyEnv(dst map[string]any, keys []Key) error {
 	for _, k := range keys {
+		if k.Enable {
+			// The naming rule makes NN_TOOLS_<NAME>_ENABLED the obvious guess
+			// for enabled = true, but nothing reads it. Silence would leave the
+			// tool in the state the user tried to change.
+			name := envName(k.Path + "." + EnabledKey)
+			if _, set := os.LookupEnv(name); set {
+				return fmt.Errorf("%s is not supported, set %s to true or false", name, envName(k.Path))
+			}
+		}
 		raw, ok := os.LookupEnv(envName(k.Path))
 		if !ok {
 			continue
@@ -36,15 +46,20 @@ func applyEnv(dst map[string]any, keys []Key) {
 			continue
 		}
 		if truthy(raw) {
-			// Only create the section. A section that the file already wrote
-			// keeps its settings.
-			if _, exists := lookup(dst, path); !exists {
-				setPath(dst, path, map[string]any{})
+			// Only create the section, or turn on one that a file switched
+			// off. A section that a file already wrote keeps its settings.
+			section, _ := lookup(dst, path)
+			table, ok := section.(map[string]any)
+			if !ok {
+				table = map[string]any{}
+				setPath(dst, path, table)
 			}
+			delete(table, EnabledKey)
 			continue
 		}
 		remove(dst, path)
 	}
+	return nil
 }
 
 func truthy(raw string) bool {
@@ -87,8 +102,9 @@ type Key struct {
 	// separated string.
 	List bool
 	// Enable says the path names a whole tool rather than a setting. A true
-	// value writes the section, a false value removes it. A runtime has no
-	// settings, so this is the only way the environment can turn one on.
+	// value writes the section and overrides enabled = false in a file, a
+	// false value removes it. A runtime has no settings, so this is the only
+	// way the environment can turn one on.
 	Enable bool
 }
 

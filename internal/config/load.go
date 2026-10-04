@@ -46,7 +46,13 @@ func Load(o Options) (*Config, error) {
 		mergeMaps(merged, m)
 	}
 
-	applyEnv(merged, o.Keys)
+	if err := applyEnv(merged, o.Keys); err != nil {
+		return nil, err
+	}
+
+	if err := pruneDisabled(merged); err != nil {
+		return nil, fmt.Errorf("%s: %w", describe(files), err)
+	}
 
 	if len(merged) == 0 {
 		// No configuration at all is a valid state: `nn run -- claude` with
@@ -111,6 +117,49 @@ func describe(files []string) string {
 		return "the environment"
 	}
 	return strings.Join(files, ", ")
+}
+
+// EnabledKey switches a table under [tools] off. A merge only adds and
+// replaces keys, and TOML has no null, so no layer can delete a table that a
+// layer below it wrote. A switch merges like any other key, which lets a later
+// file drop a tool, or one named entry of a tool, that an earlier file
+// declares.
+const EnabledKey = "enabled"
+
+// pruneDisabled removes every table under [tools] whose enabled key is false.
+// It runs after every layer has merged, so the last layer decides. It also
+// drops the key from the tables that stay, so a provider never sees it.
+func pruneDisabled(merged map[string]any) error {
+	tools, ok := merged["tools"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	return prune("tools", tools)
+}
+
+func prune(path string, table map[string]any) error {
+	for k, v := range table {
+		sub, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		p := path + "." + k
+		if raw, set := sub[EnabledKey]; set {
+			on, ok := raw.(bool)
+			if !ok {
+				return fmt.Errorf("%s.%s must be true or false, got %v", p, EnabledKey, raw)
+			}
+			delete(sub, EnabledKey)
+			if !on {
+				delete(table, k)
+				continue
+			}
+		}
+		if err := prune(p, sub); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // mergeMaps folds src into dst, descending into nested tables so a later layer

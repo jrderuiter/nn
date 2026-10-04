@@ -18,3 +18,14 @@ token_ttl = "30m"
 [tools.kubernetes.clusters.local]
 auth = "host"
 context = "k3d-dev"
+
+# Switched off, as a machine local file would. Neither table reaches a
+# provider, so the context that the kubeconfig lacks is never resolved, and
+# the profile is the same as without them.
+[tools.kubernetes.clusters.retired]
+enabled = false
+auth = "service-account"
+context = "no-such-context"
+
+[tools.github]
+enabled = false
