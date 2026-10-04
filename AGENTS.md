@@ -27,6 +27,17 @@ the reasons behind the design.
 | `internal/workspace` | The generated artifact directory under `.nono/nn` |
 | `internal/secrets` | Resolving a secret with `fnox get` |
 
+## Worktrees
+
+Do all work in a git worktree. Do not change files in the main checkout,
+because it can hold uncommitted work of the user.
+
+1. For a new branch, run
+   `git worktree add .worktrees/<branch> -b <branch> --no-track origin/main`.
+2. For an existing branch, run `git worktree add .worktrees/<branch> <branch>`.
+3. Run every command for the branch from inside its worktree.
+4. When you finish, run `git worktree remove .worktrees/<branch>`.
+
 ## Tasks
 
 Tasks live in `mise.toml`. Run them with `mise run <task>`.
@@ -116,8 +127,21 @@ Package comments say what the package is for. A comment on difficult code says
 why the code is the way it is, not what it does. The existing comments are the
 model. Match their density.
 
+Follow these rules for every comment that you add:
+
+1. Keep it short. One or two sentences are usually enough.
+2. Write for the reader of the code, not about your change. Do not describe
+   the fix or the history.
+3. Keep only details that the code does not show. If a reader can see it in
+   the code, delete the comment.
+4. Write in plain English, as in the documentation.
+
+Put guidance for coding agents in `AGENTS.md` only, not in code comments or
+`README.md`. Add it only when an agent cannot do the work correctly without it.
+
 Error messages start with a lower case letter and name what failed, for example
 `tool %q: %w`.
 
 Documentation follows the plain English style of `README.md`: short sentences,
-active voice, simple tenses, and no contractions.
+active voice, simple tenses, and no contractions. Apply the `simple-english`
+skill to the documentation and to the comments that you write.
