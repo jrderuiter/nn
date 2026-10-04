@@ -322,6 +322,17 @@ func TestEnvEnableOverridesEnabledFalse(t *testing.T) {
 	}
 }
 
+// The variable a user would guess from enabled = true is not read, so it must
+// fail rather than leave the tool as it was.
+func TestEnvEnabledVariableIsAnError(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("NN_TOOLS_GITHUB_ENABLED", "true")
+	_, err := Load(Options{Dir: root, Keys: testKeys})
+	if err == nil || !strings.Contains(err.Error(), "NN_TOOLS_GITHUB_ENABLED") {
+		t.Fatalf("got %v", err)
+	}
+}
+
 func TestEnvLeavesUnsetKeysAlone(t *testing.T) {
 	root := t.TempDir()
 	write(t, filepath.Join(root, "nn.toml"), "[nono]\nnetwork_profile = \"claude-code\"\n")

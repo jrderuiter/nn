@@ -46,7 +46,9 @@ func Load(o Options) (*Config, error) {
 		mergeMaps(merged, m)
 	}
 
-	applyEnv(merged, o.Keys)
+	if err := applyEnv(merged, o.Keys); err != nil {
+		return nil, err
+	}
 
 	if err := pruneDisabled(merged); err != nil {
 		return nil, fmt.Errorf("%s: %w", describe(files), err)

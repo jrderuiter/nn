@@ -224,7 +224,9 @@ enabled = false
 The same key removes one named entry of a tool, such as one Kubernetes
 cluster. `nn` removes every table under `[tools]` that sets `enabled = false`
 after all layers merge, so the last layer that sets the key decides. The key is
-reserved: no tool uses `enabled` as a setting.
+reserved: no tool uses `enabled` as a setting. In the environment, the switch for
+a whole tool is `NN_TOOLS_<NAME>`, not `NN_TOOLS_<NAME>_ENABLED`. See
+[Environment variables](#environment-variables).
 
 To give one string setting its default back, set it to an empty string. This
 does not work for `secret` and the `kubernetes` key `auth`, which must not be
@@ -268,6 +270,9 @@ The variable naming a tool section enables that tool. For example,
 default for a single run. A true value never clears configuration that the
 section already carries, and it turns on a tool that a file switched off with
 `enabled = false`.
+
+There is no `NN_TOOLS_<NAME>_ENABLED` variable. `nn` stops with an error when
+one is set, so the setting is not silently ignored.
 
 ### Secrets
 
