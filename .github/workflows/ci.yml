@@ -33,7 +33,7 @@ jobs:
   integration-latest:
     # Runs only on the schedule. A failure here means that the pinned nono
     # version in mise.toml needs attention, not that the last commit broke.
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
