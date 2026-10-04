@@ -127,6 +127,15 @@ Package comments say what the package is for. A comment on difficult code says
 why the code is the way it is, not what it does. The existing comments are the
 model. Match their density.
 
+Follow these rules for every comment that you add:
+
+1. Keep it short. One or two sentences are usually enough.
+2. Write for the reader of the code, not about your change. Do not describe
+   the fix or the history.
+3. Keep only details that the code does not show. If a reader can see it in
+   the code, delete the comment.
+4. Write in plain English, as in the documentation.
+
 Error messages start with a lower case letter and name what failed, for example
 `tool %q: %w`.
 
