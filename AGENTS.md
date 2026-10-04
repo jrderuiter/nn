@@ -27,6 +27,17 @@ the reasons behind the design.
 | `internal/workspace` | The generated artifact directory under `.nono/nn` |
 | `internal/secrets` | Resolving a secret with `fnox get` |
 
+## Worktrees
+
+Do all work in a git worktree. Do not change files in the main checkout,
+because it can hold uncommitted work of the user.
+
+1. For a new branch, run
+   `git worktree add .worktrees/<branch> -b <branch> --no-track origin/main`.
+2. For an existing branch, run `git worktree add .worktrees/<branch> <branch>`.
+3. Run every command for the branch from inside its worktree.
+4. When you finish, run `git worktree remove .worktrees/<branch>`.
+
 ## Tasks
 
 Tasks live in `mise.toml`. Run them with `mise run <task>`.

@@ -1,6 +1,7 @@
 /.nono/
 /bin/
 /dist/
+/.worktrees/
 
 fnox.toml
 fnox.local.toml
