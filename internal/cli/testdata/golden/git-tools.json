@@ -24,6 +24,12 @@
         "path": "$HOME/Library/Caches/mise",
         "when": "macos"
       }
+    ],
+    "read_file": [
+      {
+        "path": "/etc/gitconfig",
+        "when": "linux"
+      }
     ]
   },
   "network": {

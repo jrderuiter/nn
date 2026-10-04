@@ -15,6 +15,12 @@
   "filesystem": {
     "allow": [
       "$WORKDIR/.nono/nn"
+    ],
+    "read_file": [
+      {
+        "path": "/etc/gitconfig",
+        "when": "linux"
+      }
     ]
   },
   "network": {
