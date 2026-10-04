@@ -203,15 +203,27 @@ files, then delegates enforcement to nono:
 
 ### Configuration files
 
-`nn` reads configuration from three layers, in this order:
+`nn` reads configuration from four layers, in this order:
 
 1. User defaults from `~/.config/nn/config.toml`.
 2. Project configuration from the nearest `nn.toml` found by walking up from the
    current working directory.
-3. Environment variables.
+3. Values for one machine from `nn.local.toml`, next to that `nn.toml`.
+4. Environment variables.
 
 Layers merge per key. A project file adds to a tool that the user file declares;
 it does not replace the tool.
+
+Put values that differ per machine in `nn.local.toml`, for example the path to
+`kubectl`. Do not commit this file:
+
+```toml
+[tools.kubernetes]
+kubectl = "/opt/homebrew/bin/kubectl"
+```
+
+`nn` reads `nn.local.toml` only from the directory of the `nn.toml` that it
+found. When you pass `--config`, `nn` reads only that file.
 
 A later layer cannot delete a key, because TOML has no null. To remove a tool
 that an earlier layer declares, set `enabled = false` in its section:

@@ -109,6 +109,11 @@ type Key struct {
 	// List says the value is a list, which the environment gives as a comma
 	// separated string.
 	List bool
+	// Bool says the value is a boolean. The environment gives every value as
+	// a string, and the merged configuration is re-encoded to TOML before it
+	// is decoded into the typed structs, so a string here would fail that
+	// decode rather than turn the setting on.
+	Bool bool
 	// Enable says the path names a whole tool rather than a setting. A true
 	// value writes the section and overrides enabled = false in a file, a
 	// false value removes it. A runtime has no settings, so this is the only
@@ -117,6 +122,9 @@ type Key struct {
 }
 
 func (k Key) parse(raw string) any {
+	if k.Bool {
+		return truthy(raw)
+	}
 	if !k.List {
 		return raw
 	}
