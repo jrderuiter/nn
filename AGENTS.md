@@ -143,4 +143,5 @@ Error messages start with a lower case letter and name what failed, for example
 `tool %q: %w`.
 
 Documentation follows the plain English style of `README.md`: short sentences,
-active voice, simple tenses, and no contractions.
+active voice, simple tenses, and no contractions. Apply the `simple-english`
+skill to the documentation and to the comments that you write.
