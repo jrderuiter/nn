@@ -517,7 +517,7 @@ The `git` tool configures git commit identity and repository access:
 | `name` | Author and committer name inside the sandbox. |
 | `email` | Author and committer email address. |
 | `hosts` | Extra git server domains to allow. |
-| `config` | Allow reading the host git configuration file (default: `true`). |
+| `config` | Allow reading the host git configuration (default: `true`). This covers the user files under `$HOME` and, on Linux, the system file `/etc/gitconfig`. |
 | `worktree` | Grant the shared git directory of a linked worktree (default: `true`). |
 
 ```toml

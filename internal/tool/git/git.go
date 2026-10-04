@@ -26,7 +26,8 @@ type Config struct {
 	Email string `toml:"email"`
 	// Hosts are extra git hosts to allow, for example "gitlab.com".
 	Hosts []string `toml:"hosts"`
-	// Config grants read access to the host git configuration.
+	// Config grants read access to the host git configuration: the user files
+	// and, on Linux, the system file /etc/gitconfig.
 	Config *bool `toml:"config"`
 	// Worktree grants read and write access to the shared git directory when
 	// the working directory is a linked worktree.
@@ -75,6 +76,11 @@ func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error)
 
 	if *p.cfg.Config {
 		f.Groups = &nono.Groups{Include: []nono.CondName{nono.G("git_config")}}
+		// The git_config group covers only the files under $HOME. git treats an
+		// unreadable system file as fatal, not as absent, so without this grant
+		// every git command fails. The path is the same on every Linux host; on
+		// macOS it depends on how git was installed, so it is left out there.
+		f.Filesystem = &nono.Filesystem{ReadFile: []nono.CondPath{nono.PWhen("/etc/gitconfig", "linux")}}
 	}
 
 	if p.cfg.Name != "" {

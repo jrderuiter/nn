@@ -85,7 +85,7 @@ func TestProfileAsMixinKeepsTheArtifactGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(gitOnly, `"filesystem"`) {
+	if strings.Contains(gitOnly, `"$WORKDIR/.nono/nn"`) {
 		t.Errorf("the git mixin grants a directory that it never uses:\n%s", gitOnly)
 	}
 }
