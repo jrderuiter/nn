@@ -563,6 +563,8 @@ func TestLocalFileIsNotReadWithoutAProjectFile(t *testing.T) {
 // bool before the merged configuration is decoded, or the decode fails.
 func TestEnvSetsABoolValue(t *testing.T) {
 	root := t.TempDir()
+	// A setting variable never turns a tool on, so a file has to.
+	write(t, filepath.Join(root, "nn.toml"), "[tools.kubernetes]\n")
 	t.Setenv("NN_TOOLS_KUBERNETES_IN_CLUSTER", "true")
 	cfg, err := Load(Options{Dir: root, Keys: testKeys})
 	if err != nil {
