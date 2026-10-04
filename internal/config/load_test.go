@@ -109,6 +109,7 @@ var testKeys = []Key{
 	{Path: "nono.network_profile"},
 	{Path: "tools.kubernetes.context"},
 	{Path: "tools.kubernetes.token_ttl"},
+	{Path: "tools.kubernetes.in_cluster", Bool: true},
 	{Path: "tools.github.secret"},
 }
 
@@ -484,5 +485,119 @@ func TestProfileBlockDecodesLinux(t *testing.T) {
 	}
 	if agent == nil || agent.Linux == nil || agent.Linux.AfUnixMediation != "off" {
 		t.Fatalf("[agents.claude.profile.linux]: got %+v", agent)
+	}
+}
+
+// The machine local layer exists so that a committed nn.toml can hold what is
+// true everywhere. It adds to the table rather than replacing it, or a local
+// kubectl path would drop the tool's real settings.
+func TestLocalFileMergesIntoTheProjectFile(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, "nn.toml"),
+		"[nono]\nnetwork_profile = \"claude-code\"\n\n[tools.kubernetes]\nservice_account = \"ro\"\n")
+	write(t, filepath.Join(root, LocalFileName),
+		"[tools.kubernetes]\nkubectl = \"/opt/homebrew/bin/kubectl\"\n")
+
+	cfg, err := Load(Options{Dir: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var k struct {
+		ServiceAccount string `toml:"service_account"`
+		Kubectl        string `toml:"kubectl"`
+	}
+	md := cfg.Meta()
+	if err := md.PrimitiveDecode(cfg.Tools["kubernetes"], &k); err != nil {
+		t.Fatal(err)
+	}
+	if k.ServiceAccount != "ro" {
+		t.Fatalf("the committed settings must survive, got %+v", k)
+	}
+	if k.Kubectl != "/opt/homebrew/bin/kubectl" {
+		t.Fatalf("the local file must add its own key, got %+v", k)
+	}
+	if cfg.Nono.NetworkProfile != "claude-code" {
+		t.Fatalf("an untouched section must survive, got %q", cfg.Nono.NetworkProfile)
+	}
+	if len(cfg.Sources()) != 2 {
+		t.Fatalf("both files must be reported, got %v", cfg.Sources())
+	}
+}
+
+func TestLocalFileWinsOverTheProjectFile(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, "nn.toml"), "[tools.kubernetes]\ncontext = \"shared\"\n")
+	write(t, filepath.Join(root, LocalFileName), "[tools.kubernetes]\ncontext = \"mine\"\n")
+
+	cfg, err := Load(Options{Dir: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var k struct {
+		Context string `toml:"context"`
+	}
+	md := cfg.Meta()
+	if err := md.PrimitiveDecode(cfg.Tools["kubernetes"], &k); err != nil {
+		t.Fatal(err)
+	}
+	if k.Context != "mine" {
+		t.Fatalf("got %q, want mine", k.Context)
+	}
+}
+
+// A local file on its own means nothing: it belongs to the project file that
+// was found, and is not searched for separately.
+func TestLocalFileIsNotReadWithoutAProjectFile(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, LocalFileName), "[nono]\nnetwork_profile = \"developer\"\n")
+	cfg, err := Load(Options{Dir: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Nono.NetworkProfile != "" {
+		t.Fatalf("got %q, want nothing", cfg.Nono.NetworkProfile)
+	}
+}
+
+// The environment gives every value as a string. A bool key has to become a
+// bool before the merged configuration is decoded, or the decode fails.
+func TestEnvSetsABoolValue(t *testing.T) {
+	root := t.TempDir()
+	// A setting variable never turns a tool on, so a file has to.
+	write(t, filepath.Join(root, "nn.toml"), "[tools.kubernetes]\n")
+	t.Setenv("NN_TOOLS_KUBERNETES_IN_CLUSTER", "true")
+	cfg, err := Load(Options{Dir: root, Keys: testKeys})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var k struct {
+		InCluster bool `toml:"in_cluster"`
+	}
+	md := cfg.Meta()
+	if err := md.PrimitiveDecode(cfg.Tools["kubernetes"], &k); err != nil {
+		t.Fatal(err)
+	}
+	if !k.InCluster {
+		t.Fatal("the variable must turn the setting on")
+	}
+}
+
+func TestEnvUnsetsABoolValue(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, "nn.toml"), "[tools.kubernetes]\nin_cluster = true\n")
+	t.Setenv("NN_TOOLS_KUBERNETES_IN_CLUSTER", "false")
+	cfg, err := Load(Options{Dir: root, Keys: testKeys})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var k struct {
+		InCluster bool `toml:"in_cluster"`
+	}
+	md := cfg.Meta()
+	if err := md.PrimitiveDecode(cfg.Tools["kubernetes"], &k); err != nil {
+		t.Fatal(err)
+	}
+	if k.InCluster {
+		t.Fatal("a false value must turn the setting off")
 	}
 }
