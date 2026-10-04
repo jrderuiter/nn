@@ -42,6 +42,14 @@ func applyEnv(dst map[string]any, keys []Key) error {
 		}
 		path := strings.Split(k.Path, ".")
 		if !k.Enable {
+			// A tool setting fills in a tool that is already on. It never
+			// turns one on, so an image can carry defaults for a tool that
+			// a project does not use.
+			if len(path) > 2 && path[0] == "tools" {
+				if _, on := lookup(dst, path[:2]); !on {
+					continue
+				}
+			}
 			setPath(dst, path, k.parse(raw))
 			continue
 		}
