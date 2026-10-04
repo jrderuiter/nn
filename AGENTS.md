@@ -37,6 +37,7 @@ Tasks live in `mise.toml`. Run them with `mise run <task>`.
 | `test` | Run the unit and golden tests |
 | `golden` | Rewrite the golden profiles after a change to a generator |
 | `integration` | Run the tests that need the real `nono` binary |
+| `packs` | Install the nono packs that the golden profiles extend |
 | `lint` | Report unformatted files and vet problems |
 | `fmt` | Format the source |
 | `check` | Run `lint` and `test` together |
@@ -61,7 +62,10 @@ through verbatim.
 
 The integration tests run `nono profile validate --strict` over every golden
 profile. They need `nono` on the PATH, so they carry the `integration` build
-tag and stay out of the default run.
+tag and stay out of the default run. Some golden profiles extend an agent pack,
+so run `mise run packs` before the first run. CI runs them against the nono
+version that `mise.toml` pins, and a weekly job tries the latest nono. In CI a
+missing `nono` fails the tests instead of skipping them.
 
 ## Adding a tool
 

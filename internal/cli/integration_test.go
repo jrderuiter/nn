@@ -7,6 +7,7 @@ package cli
 
 import (
 	"encoding/json"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -67,6 +68,10 @@ func TestSchemaStillHasTheKeysWeGenerate(t *testing.T) {
 func requireNono(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("nono"); err != nil {
+		// A skip in CI would pass the job without checking anything.
+		if os.Getenv("CI") != "" {
+			t.Fatal("nono is not installed")
+		}
 		t.Skip("nono is not installed")
 	}
 }
