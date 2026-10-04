@@ -208,26 +208,22 @@ files, then delegates enforcement to nono:
 1. User defaults from `~/.config/nn/config.toml`.
 2. Project configuration from the nearest `nn.toml` found by walking up from the
    current working directory.
-3. Machine local configuration from `nn.local.toml` in the same directory as
-   that `nn.toml`.
+3. Values for one machine from `nn.local.toml`, next to that `nn.toml`.
 4. Environment variables.
 
 Layers merge per key. A project file adds to a tool that the user file declares;
 it does not replace the tool.
 
-A team commits `nn.toml`, so it holds what is true on every machine. Some values
-are not. The path to `kubectl` differs between macOS and Linux, and each person
-can give a Kubernetes context a different name. Put those values in
-`nn.local.toml`, and keep that file out of version control:
+Put values that differ per machine in `nn.local.toml`, for example the path to
+`kubectl`. Do not commit this file:
 
 ```toml
 [tools.kubernetes]
 kubectl = "/opt/homebrew/bin/kubectl"
 ```
 
-`nn` reads `nn.local.toml` only beside the `nn.toml` that it found. It does not
-search for the local file on its own, and it does not read it when you pass
-`--config`.
+`nn` reads `nn.local.toml` only from the directory of the `nn.toml` that it
+found. When you pass `--config`, `nn` reads only that file.
 
 A later layer cannot delete a key, because TOML has no null. To remove a tool
 that an earlier layer declares, set `enabled = false` in its section:
