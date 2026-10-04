@@ -3,6 +3,14 @@
   "extends": [
     "nolabs-ai/claude"
   ],
+  "groups": {
+    "include": [
+      {
+        "name": "linux_temp_read",
+        "when": "linux"
+      }
+    ]
+  },
   "filesystem": {
     "allow": [
       "$WORKDIR/.nono/nn"
@@ -56,5 +64,8 @@
   },
   "workdir": {
     "access": "readwrite"
+  },
+  "linux": {
+    "af_unix_mediation": "pathname"
   }
 }

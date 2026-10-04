@@ -92,8 +92,23 @@ type options struct {
 	// means ask git. A test hands in a fixture, because a case directory
 	// cannot hold a real .git directory.
 	gitRemotes func(ctx context.Context, dir string) ([]string, error)
+	// gitCommonDir finds the shared git directory of a linked worktree. Nil
+	// means ask git.
+	gitCommonDir func(ctx context.Context, dir string) (string, error)
 	// goos is the platform that decides the trust flag. Empty means this one.
 	goos string
+	// getenv reads the host environment for the settings that are not tool
+	// configuration. Nil means os.Getenv.
+	getenv func(string) string
+}
+
+// inHerdr says whether nn runs in a herdr pane.
+func (o options) inHerdr() bool {
+	getenv := o.getenv
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	return getenv("HERDR_ENV") == "1"
 }
 
 // warnf writes one line to the warning stream.
@@ -165,6 +180,10 @@ func prepare(opts options) (*prep, error) {
 	if remotes == nil {
 		remotes = gitRemotes
 	}
+	commonDir := opts.gitCommonDir
+	if commonDir == nil {
+		commonDir = gitCommonDir
+	}
 
 	return &prep{
 		cfg: cfg,
@@ -177,6 +196,9 @@ func prepare(opts options) (*prep, error) {
 			Lookup:      os.LookupEnv,
 			GitRemotes: func(ctx context.Context) ([]string, error) {
 				return remotes(ctx, ws.Workdir)
+			},
+			GitCommonDir: func(ctx context.Context) (string, error) {
+				return commonDir(ctx, ws.Workdir)
 			},
 		},
 		providers: providers,
@@ -274,6 +296,10 @@ func build(ctx context.Context, opts options, command []string) (*plan, error) {
 		}
 	}
 
+	if opts.inHerdr() {
+		allowHerdrPane(m.Profile())
+	}
+
 	if n := m.Profile().Network; n != nil && len(n.CustomCredentials) > 0 && trustsTheProxyCA(opts.goos) {
 		extra = append(extra, "--trust-proxy-ca")
 	}
@@ -284,6 +310,26 @@ func build(ctx context.Context, opts options, command []string) (*plan, error) {
 		secrets: secretRefs, ensureDirs: ensure, extraArgs: extra, command: command,
 		opts: opts, agent: agent,
 	}, nil
+}
+
+// allowHerdrPane lets HERDR_PANE_ID into the sandbox, so a hook inside it can
+// name its pane.
+//
+// It only extends a list that exists. Without one, nono passes every variable
+// already, and a list of only this name would strip all the others. It uses
+// allow_vars rather than set_vars, because the profile file is shared by every
+// pane in the project. HERDR_ENV and HERDR_SOCKET_PATH stay out: with them,
+// herdr's own hook reaches for the herdr socket, which is its full API.
+func allowHerdrPane(p *nono.Profile) {
+	if p.Environment == nil || len(p.Environment.AllowVars) == 0 {
+		return
+	}
+	for _, v := range p.Environment.AllowVars {
+		if v == "HERDR_PANE_ID" {
+			return
+		}
+	}
+	p.Environment.AllowVars = append(p.Environment.AllowVars, "HERDR_PANE_ID")
 }
 
 // selectAgent picks the [agents.<name>] section for a run. The --agent flag
@@ -397,6 +443,26 @@ func gitRemotes(ctx context.Context, dir string) ([]string, error) {
 	return urls, nil
 }
 
+// gitCommonDir returns the shared git directory when dir is in a linked
+// worktree. There, .git is a file that points into the main repository, which
+// keeps the objects, refs and configuration outside the working directory. In
+// a normal clone the two directories are the same, and it returns nothing. A
+// missing git or a directory that is not a repository is not an error.
+func gitCommonDir(ctx context.Context, dir string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--path-format=absolute",
+		"--git-dir", "--git-common-dir")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", nil
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) != 2 || lines[0] == lines[1] {
+		return "", nil
+	}
+	return lines[1], nil
+}
+
 // selectProviders applies the --tool flag on top of the configured set.
 func selectProviders(cfg *config.Config, opts options) ([]tool.Provider, error) {
 	providers, err := tool.Build(cfg.Meta(), cfg.Tools)
@@ -471,6 +537,16 @@ func baseProfile(n config.Nono) *nono.Profile {
 			Allow: []nono.CondPath{nono.P(workspace.ProfileVar)},
 		},
 		Environment: &nono.Environment{AllowVars: append([]string{}, baseAllowVars...)},
+		// On Linux, nono's defaults let a process write /tmp but not read it,
+		// so a build that reads back its own temporary files fails. macOS
+		// already grants the read. The predicate keeps the profile the same
+		// bytes on both platforms.
+		Groups: &nono.Groups{Include: []nono.CondName{nono.GWhen("linux_temp_read", "linux")}},
+		// On Linux, a socket lets the agent make a program outside the sandbox
+		// act for it, so a socket needs a grant unless the user turns this off.
+		// nono applies the key only on Linux, so the profile stays the same
+		// bytes on every platform.
+		Linux: &nono.Linux{AfUnixMediation: "pathname"},
 	}
 
 	p.Extends = append(p.Extends, n.Extends...)
@@ -483,9 +559,6 @@ func baseProfile(n config.Nono) *nono.Profile {
 	}
 
 	for _, g := range n.Groups {
-		if p.Groups == nil {
-			p.Groups = &nono.Groups{}
-		}
 		p.Groups.Include = append(p.Groups.Include, nono.G(g))
 	}
 	return p

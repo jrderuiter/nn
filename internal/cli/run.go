@@ -30,6 +30,13 @@ func newRunCmd(opts *options) *cobra.Command {
 			if err := requireConfig(o); err != nil {
 				return err
 			}
+			// Before the build, so secrets resolve in the process that
+			// launches nono, and only once.
+			if !o.dryRun {
+				if err := nono.ExecWithAgent(agentName(command)); err != nil {
+					return err
+				}
+			}
 			p, err := build(cmd.Context(), o, command)
 			if err != nil {
 				return err

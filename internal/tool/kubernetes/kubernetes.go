@@ -1,4 +1,5 @@
-// Package kubernetes gives a sandboxed agent access to one Kubernetes cluster.
+// Package kubernetes gives a sandboxed agent access to one or more Kubernetes
+// clusters.
 //
 // nono has no Kubernetes feature of its own, so this provider assembles the
 // access out of two generic nono parts: a credential_capture entry that mints a
@@ -16,18 +17,25 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"gopkg.in/yaml.v3"
 
 	"github.com/jrderuiter/nn/internal/nono"
 	"github.com/jrderuiter/nn/internal/tool"
 	"github.com/jrderuiter/nn/internal/workspace"
 )
 
-// Config is the [tools.kubernetes] table.
+// Config is the [tools.kubernetes] table. Without clusters it describes one
+// cluster. With clusters, auth, context, service_account, cluster_ca and
+// allow_missing_ca move into each cluster, and the other settings here are
+// the defaults that every cluster shares.
 type Config struct {
 	// Auth picks how the sandbox authenticates, and has no default.
 	// "service-account" keeps every credential on the host. "host" copies the
@@ -55,6 +63,26 @@ type Config struct {
 	// was found. nono has no option to skip upstream verification, so this
 	// only helps when the API server uses a publicly trusted certificate.
 	AllowMissingCA bool `toml:"allow_missing_ca"`
+	// Current names the cluster that the sandbox kubeconfig selects. It is
+	// required when there is more than one cluster.
+	Current string `toml:"current"`
+	// Clusters holds one table per cluster, keyed by the context name that
+	// the sandbox kubeconfig gives it. It is set only from nn.toml.
+	Clusters map[string]Cluster `toml:"clusters"`
+}
+
+// Cluster is one [tools.kubernetes.clusters.<name>] table. Its settings mean
+// the same as in Config, and an empty one takes the value from Config.
+type Cluster struct {
+	Auth                    string `toml:"auth"`
+	Context                 string `toml:"context"`
+	ServiceAccount          string `toml:"service_account"`
+	ServiceAccountNamespace string `toml:"service_account_namespace"`
+	TokenTTL                string `toml:"token_ttl"`
+	Kubectl                 string `toml:"kubectl"`
+	Kubeconfig              string `toml:"kubeconfig"`
+	ClusterCA               string `toml:"cluster_ca"`
+	AllowMissingCA          bool   `toml:"allow_missing_ca"`
 }
 
 // The values of auth.
@@ -63,6 +91,8 @@ const (
 	authHost           = "host"
 )
 
+// routeName and tokenEnv are the names of the single cluster form. A named
+// cluster adds its own suffix, so each one has its own route and token.
 const routeName = "k8s"
 
 // tokenEnv is the variable that carries the per-session phantom token into the
@@ -70,8 +100,28 @@ const routeName = "k8s"
 // the field whenever credential_key uses the cmd:// scheme.
 const tokenEnv = "K8S_TOKEN"
 
+// clusterName limits a cluster key to what is safe in a route name, a
+// variable name and a file name.
+var clusterName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
+
 type provider struct {
-	cfg     Config
+	targets []*target
+	// current is the context the sandbox kubeconfig selects. Empty means the
+	// only target, under its own name.
+	current string
+}
+
+// target is one cluster and everything resolved for it.
+type target struct {
+	cfg Cluster
+	// label is the context name in the sandbox kubeconfig. Empty means the
+	// name of the host context, which is the single cluster form.
+	label    string
+	route    string
+	tokenEnv string
+	// caFile is the name of the certificate authority file, next to the
+	// sandbox kubeconfig.
+	caFile  string
 	ttl     time.Duration
 	host    string // resolved API server, filled by resolve
 	kubectl string // absolute kubectl path, filled by resolve
@@ -89,19 +139,114 @@ func init() {
 }
 
 func New(md toml.MetaData, prim toml.Primitive) (tool.Provider, error) {
-	cfg := Config{TokenTTL: "1h", Kubectl: "kubectl", ServiceAccountNamespace: "default"}
+	var cfg Config
 	if err := md.PrimitiveDecode(prim, &cfg); err != nil {
 		return nil, err
 	}
+	// The defaults apply after the decode, so an empty value means the
+	// default. A later layer cannot delete a key, and an empty string is how
+	// it hands a setting back.
+	if cfg.TokenTTL == "" {
+		cfg.TokenTTL = "1h"
+	}
+	if cfg.Kubectl == "" {
+		cfg.Kubectl = "kubectl"
+	}
+	if cfg.ServiceAccountNamespace == "" {
+		cfg.ServiceAccountNamespace = "default"
+	}
+	if len(cfg.Clusters) == 0 {
+		if cfg.Current != "" {
+			return nil, fmt.Errorf("current %q names a cluster, but there is no [tools.kubernetes.clusters] table", cfg.Current)
+		}
+		t, err := newTarget(Cluster{
+			Auth: cfg.Auth, Context: cfg.Context, ServiceAccount: cfg.ServiceAccount,
+			ServiceAccountNamespace: cfg.ServiceAccountNamespace, TokenTTL: cfg.TokenTTL,
+			Kubectl: cfg.Kubectl, Kubeconfig: cfg.Kubeconfig, ClusterCA: cfg.ClusterCA,
+			AllowMissingCA: cfg.AllowMissingCA,
+		})
+		if err != nil {
+			return nil, err
+		}
+		t.route, t.tokenEnv, t.caFile = routeName, tokenEnv, "ca.pem"
+		return &provider{targets: []*target{t}}, nil
+	}
+	return newClusters(cfg)
+}
+
+// newClusters builds the named cluster form. Each cluster says for itself
+// what it is, so the keys that pick a cluster and its credentials are refused
+// at the top, where they would silently apply to all of them.
+func newClusters(cfg Config) (*provider, error) {
+	for key, set := range map[string]bool{
+		"auth": cfg.Auth != "", "context": cfg.Context != "", "service_account": cfg.ServiceAccount != "",
+		"cluster_ca": cfg.ClusterCA != "", "allow_missing_ca": cfg.AllowMissingCA,
+	} {
+		if set {
+			return nil, fmt.Errorf("%s belongs in each [tools.kubernetes.clusters.<name>] table "+
+				"when clusters are declared", key)
+		}
+	}
+	names := make([]string, 0, len(cfg.Clusters))
+	for name := range cfg.Clusters {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	p := &provider{current: cfg.Current}
+	idents := map[string]string{}
+	for _, name := range names {
+		if !clusterName.MatchString(name) {
+			return nil, fmt.Errorf("cluster %q: a name holds only letters, digits, - and _", name)
+		}
+		ident := strings.ToLower(strings.ReplaceAll(name, "-", "_"))
+		if other, dup := idents[ident]; dup {
+			return nil, fmt.Errorf("clusters %q and %q would share the route %q; rename one of them",
+				other, name, routeName+"_"+ident)
+		}
+		idents[ident] = name
+		c := cfg.Clusters[name]
+		if c.ServiceAccountNamespace == "" {
+			c.ServiceAccountNamespace = cfg.ServiceAccountNamespace
+		}
+		if c.TokenTTL == "" {
+			c.TokenTTL = cfg.TokenTTL
+		}
+		if c.Kubectl == "" {
+			c.Kubectl = cfg.Kubectl
+		}
+		if c.Kubeconfig == "" {
+			c.Kubeconfig = cfg.Kubeconfig
+		}
+		t, err := newTarget(c)
+		if err != nil {
+			return nil, fmt.Errorf("cluster %q: %w", name, err)
+		}
+		t.label = name
+		t.route = routeName + "_" + ident
+		t.tokenEnv = tokenEnv + "_" + strings.ToUpper(ident)
+		t.caFile = "ca-" + name + ".pem"
+		p.targets = append(p.targets, t)
+	}
+	switch {
+	case p.current == "" && len(names) == 1:
+		p.current = names[0]
+	case p.current == "":
+		return nil, fmt.Errorf("current is required with more than one cluster; set it to one of %v", names)
+	case !slices.Contains(names, p.current):
+		return nil, fmt.Errorf("current %q is not a cluster; set it to one of %v", p.current, names)
+	}
+	return p, nil
+}
+
+// newTarget checks the settings of one cluster.
+func newTarget(cfg Cluster) (*target, error) {
 	ttl, err := time.ParseDuration(cfg.TokenTTL)
 	if err != nil {
 		return nil, fmt.Errorf("token_ttl %q is not a duration: %w", cfg.TokenTTL, err)
 	}
 	if ttl < time.Minute {
 		return nil, fmt.Errorf("token_ttl must be at least one minute, got %s", cfg.TokenTTL)
-	}
-	if cfg.ServiceAccountNamespace == "" {
-		cfg.ServiceAccountNamespace = "default"
 	}
 	// auth has no default, so the choice between the two forms is always
 	// written down. The weaker form puts the host credentials, often a cluster
@@ -123,14 +268,45 @@ func New(md toml.MetaData, prim toml.Primitive) (tool.Provider, error) {
 	default:
 		return nil, fmt.Errorf("auth must be %q or %q, got %q", authServiceAccount, authHost, cfg.Auth)
 	}
-	return &provider{cfg: cfg, ttl: ttl}, nil
+	return &target{cfg: cfg, ttl: ttl}, nil
 }
 
 func (p *provider) Name() string { return "kubernetes" }
 
+// errorf names the cluster in the named form, and leaves the single form
+// messages as they are.
+func (t *target) errorf(err error) error {
+	if t.label == "" || err == nil {
+		return err
+	}
+	return fmt.Errorf("cluster %q: %w", t.label, err)
+}
+
+// resolveAll resolves every target, then makes sure that the proxy can tell
+// them apart.
+func (p *provider) resolveAll(e *tool.Env) error {
+	for _, t := range p.targets {
+		if err := t.errorf(t.resolve(e)); err != nil {
+			return err
+		}
+	}
+	// nono picks a route by upstream host alone. Two clusters behind one API
+	// server would share the route, and one of them would get the other's
+	// token, or a host credential would be replaced on the way.
+	for i, a := range p.targets {
+		for _, b := range p.targets[i+1:] {
+			if a.host == b.host && (a.cfg.Auth == authServiceAccount || b.cfg.Auth == authServiceAccount) {
+				return fmt.Errorf("clusters %q and %q both use the API server %s; "+
+					"the proxy picks a token by host, so keep one of them", a.label, b.label, a.host)
+			}
+		}
+	}
+	return nil
+}
+
 // resolve works out everything Build needs. It reads files but changes
 // nothing, so both Preflight and Build can call it.
-func (p *provider) resolve(e *tool.Env) error {
+func (p *target) resolve(e *tool.Env) error {
 	path := p.cfg.Kubeconfig
 	switch {
 	case path == "":
@@ -177,7 +353,7 @@ func (p *provider) resolve(e *tool.Env) error {
 // Without a certificate authority the proxy falls back to the system roots,
 // and a cluster with a private authority then fails at the first request with
 // "TLS handshake failed: invalid peer certificate: UnknownIssuer".
-func (p *provider) checkCA() error {
+func (p *target) checkCA() error {
 	if p.cfg.AllowMissingCA {
 		return nil
 	}
@@ -197,7 +373,7 @@ func (p *provider) checkCA() error {
 }
 
 // caBytes returns the cluster authority, preferring the explicit file.
-func (p *provider) caBytes() ([]byte, error) {
+func (p *target) caBytes() ([]byte, error) {
 	if p.cfg.ClusterCA != "" {
 		path := p.cfg.ClusterCA
 		if !filepath.IsAbs(path) {
@@ -213,9 +389,19 @@ func (p *provider) caBytes() ([]byte, error) {
 }
 
 func (p *provider) Preflight(ctx context.Context, e *tool.Env) error {
-	if err := p.resolve(e); err != nil {
+	if err := p.resolveAll(e); err != nil {
 		return err
 	}
+	for _, t := range p.targets {
+		if err := t.errorf(t.probe(ctx)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// probe mints one token, as nono will at launch.
+func (p *target) probe(ctx context.Context) error {
 	if p.cfg.Auth == authHost {
 		return nil
 	}
@@ -290,75 +476,64 @@ func captureEnv() []string {
 }
 
 func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error) {
-	if p.res == nil {
-		if err := p.resolve(e); err != nil {
+	if p.targets[0].res == nil {
+		if err := p.resolveAll(e); err != nil {
 			return nil, err
 		}
 	}
-	if p.cfg.Auth == authHost {
-		return p.buildDirect(e)
-	}
-	return p.buildProxy(e)
-}
-
-// buildProxy is the service-account form, and the default. kubectl talks to the real API server, and
-// nono's proxy intercepts the connection, adds the bearer token and verifies
-// the cluster certificate on the far side. The token never enters the sandbox.
-func (p *provider) buildProxy(e *tool.Env) (*tool.Result, error) {
-	ca, err := p.caBytes()
-	if err != nil {
-		return nil, err
-	}
-
 	kubeDir := workspace.ProfileVar + "/kube"
-	cfgBytes, err := proxyKubeconfig(p.name(), p.res.Cluster.Server, p.cfg.ServiceAccountNamespace, tokenEnv)
+	network := &nono.Network{}
+	var captures map[string]nono.CredentialCapture
+	var entries []kubeconfig
+	var artifacts []tool.Artifact
+	for _, t := range p.targets {
+		var part *part
+		var err error
+		if t.cfg.Auth == authHost {
+			part, err = t.buildDirect()
+		} else {
+			part, err = t.buildProxy(kubeDir)
+		}
+		if err != nil {
+			return nil, t.errorf(err)
+		}
+		entries = append(entries, part.entry)
+		artifacts = append(artifacts, part.artifacts...)
+		if part.route != nil {
+			if captures == nil {
+				captures = map[string]nono.CredentialCapture{}
+				network.CustomCredentials = map[string]nono.CustomCredential{}
+			}
+			captures[t.route] = part.capture
+			network.Credentials = append(network.Credentials, t.route)
+			network.CustomCredentials[t.route] = *part.route
+		}
+		if part.port != 0 && !slices.Contains(network.OpenPort, part.port) {
+			network.OpenPort = append(network.OpenPort, part.port)
+		}
+		if part.domain != "" && !slices.ContainsFunc(network.AllowDomain, func(d nono.Domain) bool { return d.Domain == part.domain }) {
+			network.AllowDomain = append(network.AllowDomain, nono.Domain{Domain: part.domain})
+		}
+	}
+	current := p.current
+	if current == "" {
+		current = p.targets[0].name()
+	}
+	cfgBytes, err := yaml.Marshal(combine(current, entries))
 	if err != nil {
 		return nil, err
 	}
-
-	route := nono.CustomCredential{
-		Upstream:      "https://" + p.host,
-		CredentialKey: "cmd://" + routeName,
-		EnvVar:        tokenEnv,
-		InjectMode:    "header",
-		InjectHeader:  "Authorization",
-		CredentialFmt: "Bearer {}",
-	}
-	artifacts := []tool.Artifact{
-		{RelPath: "kube/config", Mode: 0o600, Content: cfgBytes},
-	}
-	if len(ca) > 0 {
-		// This is the cluster's own certificate authority. It belongs to the
-		// leg between nono and the API server, which is the leg that still
-		// proves the cluster's identity.
-		//
-		// tls_ca resolves $WORKDIR from the environment rather than expanding
-		// it as a profile variable, which is why nn sets WORKDIR on the nono
-		// process. Keeping the spelling relative is what makes the generated
-		// profile the same on every machine.
-		route.TLSCA = kubeDir + "/ca.pem"
-		artifacts = append(artifacts, tool.Artifact{RelPath: "kube/ca.pem", Mode: 0o644, Content: ca})
-	}
+	artifacts = append(artifacts, tool.Artifact{RelPath: "kube/config", Mode: 0o600, Content: cfgBytes})
 
 	f := &nono.Profile{
-		CredentialCapture: map[string]nono.CredentialCapture{
-			routeName: {
-				Command:      p.tokenCommand(),
-				TimeoutSecs:  30,
-				CacheTTLSecs: p.cacheTTLSecs(),
-			},
-		},
-		Network: &nono.Network{
-			Credentials:       []string{routeName},
-			CustomCredentials: map[string]nono.CustomCredential{routeName: route},
-			AllowDomain:       []nono.Domain{{Domain: hostOnly(p.host)}},
-		},
+		CredentialCapture: captures,
+		Network:           network,
 		// No filesystem grant: kubeDir sits inside the artifact directory,
 		// which the base profile already grants recursively.
 		Environment: &nono.Environment{
 			// KUBERNETES_* is what a kubelet sets inside a pod; nothing here
-			// produces it. The phantom token needs no entry either: nono
-			// injects it after this filter runs, and both names below go
+			// produces it. The phantom tokens need no entry either: nono
+			// injects them after this filter runs, and both names below go
 			// through set_vars, which nono applies after it too.
 			SetVars: map[string]string{
 				"KUBECONFIG": kubeDir + "/config",
@@ -377,10 +552,64 @@ func (p *provider) buildProxy(e *tool.Env) (*tool.Result, error) {
 	return &tool.Result{Fragment: f, Artifacts: artifacts}, nil
 }
 
+// part is what one cluster adds to the profile and to the sandbox kubeconfig.
+type part struct {
+	entry     kubeconfig
+	artifacts []tool.Artifact
+	// route and capture are set for the service-account form only.
+	route   *nono.CustomCredential
+	capture nono.CredentialCapture
+	// domain is the host to allow, and port the local port to open instead.
+	domain string
+	port   int
+}
+
+// buildProxy is the service-account form. kubectl talks to the real API
+// server, and nono's proxy intercepts the connection, adds the bearer token
+// and verifies the cluster certificate on the far side. The token never
+// enters the sandbox.
+func (p *target) buildProxy(kubeDir string) (*part, error) {
+	ca, err := p.caBytes()
+	if err != nil {
+		return nil, err
+	}
+	route := nono.CustomCredential{
+		Upstream:      "https://" + p.host,
+		CredentialKey: "cmd://" + p.route,
+		EnvVar:        p.tokenEnv,
+		InjectMode:    "header",
+		InjectHeader:  "Authorization",
+		CredentialFmt: "Bearer {}",
+	}
+	out := &part{
+		entry: proxyEntry(p.name(), p.res.Cluster.Server, p.cfg.ServiceAccountNamespace, p.tokenEnv),
+		route: &route,
+		capture: nono.CredentialCapture{
+			Command:      p.tokenCommand(),
+			TimeoutSecs:  30,
+			CacheTTLSecs: p.cacheTTLSecs(),
+		},
+		domain: hostOnly(p.host),
+	}
+	if len(ca) > 0 {
+		// This is the cluster's own certificate authority. It belongs to the
+		// leg between nono and the API server, which is the leg that still
+		// proves the cluster's identity.
+		//
+		// tls_ca resolves $WORKDIR from the environment rather than expanding
+		// it as a profile variable, which is why nn sets WORKDIR on the nono
+		// process. Keeping the spelling relative is what makes the generated
+		// profile the same on every machine.
+		route.TLSCA = kubeDir + "/" + p.caFile
+		out.artifacts = append(out.artifacts, tool.Artifact{RelPath: "kube/" + p.caFile, Mode: 0o644, Content: ca})
+	}
+	return out, nil
+}
+
 // buildDirect is the host form. It copies the host context's own credentials
 // into the sandbox, which is weaker, and it does not work for a context whose
 // credentials come from an exec plugin.
-func (p *provider) buildDirect(e *tool.Env) (*tool.Result, error) {
+func (p *target) buildDirect() (*part, error) {
 	if _, isExec := p.res.User["exec"]; isExec {
 		return nil, fmt.Errorf(
 			"context %q authenticates with an exec plugin, which cannot run inside the sandbox; "+
@@ -390,45 +619,31 @@ func (p *provider) buildDirect(e *tool.Env) (*tool.Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	kubeDir := workspace.ProfileVar + "/kube"
+	out := &part{}
 	var caPath string
-	artifacts := []tool.Artifact{}
 	if len(ca) > 0 {
 		// kubectl reads this path, not nono, so it cannot use the $WORKDIR
 		// spelling of the profile. kubectl resolves a relative path against
-		// the directory of the kubeconfig, which is where ca.pem lands.
-		caPath = "ca.pem"
-		artifacts = append(artifacts, tool.Artifact{RelPath: "kube/ca.pem", Mode: 0o644, Content: ca})
+		// the directory of the kubeconfig, which is where the file lands.
+		caPath = p.caFile
+		out.artifacts = append(out.artifacts, tool.Artifact{RelPath: "kube/" + p.caFile, Mode: 0o644, Content: ca})
 	}
-	cfgBytes, err := directKubeconfig(p.name(), p.res, caPath)
-	if err != nil {
-		return nil, err
-	}
-	artifacts = append(artifacts, tool.Artifact{RelPath: "kube/config", Mode: 0o600, Content: cfgBytes})
-
-	network := &nono.Network{AllowDomain: []nono.Domain{{Domain: hostOnly(p.host)}}}
+	out.entry = directEntry(p.name(), p.res, caPath)
 	if port, ok := loopbackPort(p.host); ok {
 		// Go never sends a loopback address through a proxy, so kubectl
 		// connects straight to the port, and the proxy's domain list does
 		// not apply. macOS offers no connect-only grant, so open_port also
 		// lets the sandbox listen on the port, which the cluster holds.
-		network = &nono.Network{OpenPort: []int{port}}
+		out.port = port
+	} else {
+		out.domain = hostOnly(p.host)
 	}
-	f := &nono.Profile{
-		Network: network,
-		Environment: &nono.Environment{
-			SetVars: map[string]string{
-				"KUBECONFIG":   kubeDir + "/config",
-				"KUBECACHEDIR": kubeDir + "/cache",
-			},
-		},
-	}
-	return &tool.Result{Fragment: f, Artifacts: artifacts}, nil
+	return out, nil
 }
 
 // tokenCommand is the argv nono runs on the host to mint a token. It runs
 // outside the sandbox, with the user's own cluster credentials.
-func (p *provider) tokenCommand() []string {
+func (p *target) tokenCommand() []string {
 	bin := p.kubectl
 	if bin == "" {
 		bin = p.cfg.Kubectl
@@ -450,7 +665,7 @@ func (p *provider) tokenCommand() []string {
 
 // cacheTTLSecs keeps the cached token comfortably inside its own lifetime, so
 // a cached value never outlives the token it holds.
-func (p *provider) cacheTTLSecs() int {
+func (p *target) cacheTTLSecs() int {
 	secs := int(p.ttl.Seconds() * 0.8)
 	if secs < 60 {
 		secs = 60
@@ -458,7 +673,10 @@ func (p *provider) cacheTTLSecs() int {
 	return secs
 }
 
-func (p *provider) name() string {
+func (p *target) name() string {
+	if p.label != "" {
+		return p.label
+	}
 	if p.cfg.Context != "" {
 		return p.cfg.Context
 	}

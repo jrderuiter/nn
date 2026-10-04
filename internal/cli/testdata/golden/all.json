@@ -5,6 +5,10 @@
   ],
   "groups": {
     "include": [
+      {
+        "name": "linux_temp_read",
+        "when": "linux"
+      },
       "mise_manager",
       "git_config"
     ]
@@ -13,7 +17,17 @@
     "allow": [
       "$WORKDIR/.nono/nn",
       "$HOME/.local/state/mise",
-      "$HOME/.cache/mise"
+      "$HOME/.cache/mise",
+      {
+        "path": "$HOME/Library/Caches/mise",
+        "when": "macos"
+      }
+    ],
+    "read_file": [
+      {
+        "path": "/etc/gitconfig",
+        "when": "linux"
+      }
     ]
   },
   "network": {
@@ -90,11 +104,15 @@
       "GIT_CONFIG_VALUE_2": "git@ssh.dev.azure.com:v3/acme/Platform/",
       "GIT_CONFIG_VALUE_3": "ssh://git@ssh.dev.azure.com/v3/acme/Platform/",
       "KUBECACHEDIR": "$WORKDIR/.nono/nn/kube/cache",
-      "KUBECONFIG": "$WORKDIR/.nono/nn/kube/config"
+      "KUBECONFIG": "$WORKDIR/.nono/nn/kube/config",
+      "MISE_TRUSTED_CONFIG_PATHS": "$WORKDIR"
     }
   },
   "workdir": {
     "access": "readwrite"
+  },
+  "linux": {
+    "af_unix_mediation": "pathname"
   },
   "credential_capture": {
     "k8s": {

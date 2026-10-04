@@ -1,10 +1,14 @@
 {
   "$schema": "https://nono.sh/schemas/nono-profile.schema.json",
   "extends": [
-    "jr/clean_env"
+    "default"
   ],
   "groups": {
     "include": [
+      {
+        "name": "linux_temp_read",
+        "when": "linux"
+      },
       "unlink_protection",
       "mise_manager",
       "node_runtime",
@@ -15,7 +19,17 @@
     "allow": [
       "$WORKDIR/.nono/nn",
       "$HOME/.local/state/mise",
-      "$HOME/.cache/mise"
+      "$HOME/.cache/mise",
+      {
+        "path": "$HOME/Library/Caches/mise",
+        "when": "macos"
+      }
+    ],
+    "read_file": [
+      {
+        "path": "/etc/gitconfig",
+        "when": "linux"
+      }
     ]
   },
   "network": {
@@ -45,5 +59,8 @@
   },
   "workdir": {
     "access": "readwrite"
+  },
+  "linux": {
+    "af_unix_mediation": "pathname"
   }
 }

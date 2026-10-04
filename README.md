@@ -182,7 +182,10 @@ files, then delegates enforcement to nono:
    single profile, and writes it to `.nono/nn/profile.json` (or
    `.nono/nn/profile-<agent>.json` when targeting an agent). Paths in the profile
    are written relative to `$WORKDIR`, so profiles remain portable across
-   machines.
+   machines. On Linux, the profile also includes nono's `linux_temp_read` group.
+   nono lets a process write `/tmp` on Linux but not read it, and a build that
+   reads back its own temporary files then fails. macOS already grants this
+   read access.
 2. **Support files:** When tools require local files, `nn` creates them under
    `.nono/nn/`. For example, it writes a scoped `kube/config` and cluster CA for
    Kubernetes, or isolated `gh/` settings for GitHub. `nn` places a `.gitignore`
@@ -209,6 +212,25 @@ files, then delegates enforcement to nono:
 
 Layers merge per key. A project file adds to a tool that the user file declares;
 it does not replace the tool.
+
+A later layer cannot delete a key, because TOML has no null. To remove a tool
+that an earlier layer declares, set `enabled = false` in its section:
+
+```toml
+[tools.github]
+enabled = false
+```
+
+The same key removes one named entry of a tool, such as one Kubernetes
+cluster. `nn` removes every table under `[tools]` that sets `enabled = false`
+after all layers merge, so the last layer that sets the key decides. The key is
+reserved: no tool uses `enabled` as a setting. In the environment, the switch for
+a whole tool is `NN_TOOLS_<NAME>`, not `NN_TOOLS_<NAME>_ENABLED`. See
+[Environment variables](#environment-variables).
+
+To give one string setting its default back, set it to an empty string. This
+does not work for `secret` and the `kubernetes` key `auth`, which must not be
+empty.
 
 When the upward search does not find an `nn.toml`, `nn run` and `nn doctor` stop
 with an error. `nn init` writes an example file in the working directory.
@@ -246,7 +268,11 @@ The variable naming a tool section enables that tool. For example,
 `NN_TOOLS_MISE=true` turns on the `mise` tool. A false value (`false`, `0`,
 `no`, `off`, or empty) removes the tool, allowing you to disable a project
 default for a single run. A true value never clears configuration that the
-section already carries.
+section already carries, and it turns on a tool that a file switched off with
+`enabled = false`.
+
+There is no `NN_TOOLS_<NAME>_ENABLED` variable. `nn` stops with an error when
+one is set, so the setting is not silently ignored.
 
 A setting variable, such as `NN_TOOLS_KUBERNETES_CONTEXT`, never turns a tool
 on. It only fills in a tool that a configuration file or the section variable
@@ -316,6 +342,41 @@ Lists behave differently. The block adds its entries to the list that the tools
 built; it cannot remove an entry. To restrict access, write a deny rule, such as
 `filesystem.deny`, `network.deny_domain`, or `environment.deny_vars`.
 
+#### Unix sockets on Linux
+
+On Linux, an agent in the sandbox can talk to programs on your machine through
+their Unix sockets. A Unix socket is a file that a local program listens on.
+Through it, the agent can make that program act outside the sandbox, for
+example to control your terminal sessions.
+
+nn blocks these sockets by default. The block has no effect on macOS.
+
+If a program in the sandbox needs a socket, such as `ssh-agent`, add the socket
+path to `filesystem.unix_socket` in the `[nono.profile]` block:
+
+```toml
+[nono.profile.filesystem]
+unix_socket = ["/run/user/1000/ssh-agent.socket"]
+```
+
+To turn the block off, add this block to `nn.toml`:
+
+```toml
+[nono.profile.linux]
+af_unix_mediation = "off"
+```
+
+### Running inside herdr
+
+herdr is a terminal multiplexer for coding agents. In a herdr pane, nn works
+with two herdr features without extra configuration:
+
+- herdr shows the agent that runs in the pane, for example Claude.
+- A hook inside the sandbox can read `HERDR_PANE_ID` to find its pane.
+
+nn does not let the other herdr variables into the sandbox. With them, the
+agent can control herdr.
+
 ## Configuration reference
 
 ### Full example
@@ -324,7 +385,7 @@ Here is a full `nn.toml` that demonstrates the available sections:
 
 ```toml
 [nono]
-extends = ["jr/clean_env"]
+extends = ["default"]
 groups  = ["unlink_protection"]
 network_profile = "minimal"
 allow_domain = ["proxy.golang.org"]
@@ -443,7 +504,7 @@ Install the pack with `nono pull nolabs-ai/codex` before running the agent.
 | `git` | A committer identity, git configuration, and extra hosts |
 | `github` | The GitHub API, plus clone, fetch, and push over HTTPS |
 | `azure_devops` | The Azure DevOps API, plus clone, fetch, and push over HTTPS |
-| `kubernetes` | Access to one cluster through nono's credential proxy |
+| `kubernetes` | Access to one or more clusters through nono's credential proxy |
 
 #### Runtimes
 
@@ -459,6 +520,22 @@ section turns the runtime on:
 Each runtime includes its corresponding nono group and configures writable cache
 and state directories under the project or user cache.
 
+The `mise` tool has one setting:
+
+| Key | Description |
+| --- | --- |
+| `trust_workdir` | Trust the mise configuration files in the working directory, inside the sandbox only (default: `false`). |
+
+mise trusts a configuration file by its path. A new git worktree is a new path,
+so mise refuses its `mise.toml` even when you trust the main repository. With
+`trust_workdir = true`, nn sets `MISE_TRUSTED_CONFIG_PATHS` to `$WORKDIR` in the
+sandbox. The trust state of mise on the host does not change.
+
+```toml
+[tools.mise]
+trust_workdir = true
+```
+
 #### Git
 
 The `git` tool configures git commit identity and repository access:
@@ -468,7 +545,8 @@ The `git` tool configures git commit identity and repository access:
 | `name` | Author and committer name inside the sandbox. |
 | `email` | Author and committer email address. |
 | `hosts` | Extra git server domains to allow. |
-| `config` | Allow reading the host git configuration file (default: `false`). |
+| `config` | Allow reading the host git configuration (default: `true`). This covers the user files under `$HOME` and, on Linux, the system file `/etc/gitconfig`. |
+| `worktree` | Grant the shared git directory of a linked worktree (default: `true`). |
 
 ```toml
 [tools.git]
@@ -477,6 +555,14 @@ email  = "jane@example.com"
 hosts  = ["git.example.com"]
 config = true
 ```
+
+A linked worktree, which `git worktree add` creates, keeps its objects, refs and
+configuration in the `.git` directory of the main repository. That directory is
+outside the working directory, so git fails in the sandbox without a grant. When
+the working directory is a linked worktree, nn passes `--allow <dir>` to nono
+for that `.git` directory. The grant is a flag and not a profile entry, because
+the path is different on each machine. nn does not grant the checkout of the
+main repository. Set `worktree = false` to turn the grant off.
 
 #### GitHub
 
@@ -536,6 +622,8 @@ nono's credential proxy:
 | `kubectl` | Path to host `kubectl` binary (must be a real binary, not a shim). |
 | `cluster_ca` | Path to PEM CA certificate if the kubeconfig context lacks one. |
 | `allow_missing_ca` | Allow clusters without a CA certificate (default: `false`). |
+| `current` | The cluster that the sandbox kubeconfig selects (required with more than one cluster). |
+| `clusters` | One table for each cluster, keyed by its context name in the sandbox. |
 
 **Service account mode (recommended):**
 Mints short-lived tokens on the host using your own credentials and injects them
@@ -559,6 +647,49 @@ auth    = "host"
 context = "k3d-dev"
 ```
 
+**More than one cluster:**
+Declare one table under `clusters` for each cluster. The key of the table is
+the context name in the sandbox, so the agent runs `kubectl --context prod`.
+Each table holds `auth`, `context`, `service_account`, `cluster_ca` and
+`allow_missing_ca` for its cluster. The other keys in `[tools.kubernetes]` are
+defaults that every cluster shares, and a cluster table can override them.
+
+```toml
+[tools.kubernetes]
+kubectl = "/opt/homebrew/bin/kubectl"
+current = "local"
+
+[tools.kubernetes.clusters.prod]
+auth            = "service-account"
+context         = "prod-eks"
+service_account = "agent-reader"
+
+[tools.kubernetes.clusters.local]
+auth    = "host"
+context = "k3d-dev"
+```
+
+`nn` writes one kubeconfig that holds every cluster. Each service account
+cluster gets its own token, proxy route and certificate authority file. nono
+mints each token at launch, so a backend that asks for a touch asks once for
+each cluster.
+
+nono picks a proxy route by the host of the API server. If two clusters use
+the same API server and one of them uses `"service-account"`, `nn` stops with
+an error. The `clusters` tables come from `nn.toml` only, because they have no
+spelling as one environment variable.
+
+To drop a cluster that an earlier file declares, set `enabled = false` in its
+table. For example, a machine that cannot reach `prod` can use this:
+
+```toml
+[tools.kubernetes.clusters.prod]
+enabled = false
+```
+
+If `current` names the cluster that you removed, set `current` to another
+cluster. With one cluster left, `current` defaults to it.
+
 ## Development
 
 Tasks live in `mise.toml`:
@@ -569,6 +700,7 @@ mise run dist          build for macOS and Linux, amd64 and arm64
 mise run test          unit and golden tests
 mise run golden        rewrite the golden profiles
 mise run integration   tests that need the real nono binary
+mise run packs         install the nono packs that the integration tests need
 mise run lint          gofmt and go vet
 mise run check         lint and test together
 ```
@@ -577,4 +709,9 @@ The golden tests build a profile for each case under
 `internal/cli/testdata/cases` and compare it byte for byte. The integration
 tests make sure that every golden profile is valid, with
 `nono profile validate --strict`. They fail when a nono upgrade renames a key
-that `nn` generates.
+that `nn` generates. Some golden profiles extend an agent pack, so run
+`mise run packs` once before you run them.
+
+CI runs the integration tests on every push and pull request, against the nono
+version that `mise.toml` pins. A weekly run uses the latest nono. When that run
+fails, a new nono release changed something that `nn` depends on.
