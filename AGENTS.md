@@ -136,6 +136,9 @@ Follow these rules for every comment that you add:
    the code, delete the comment.
 4. Write in plain English, as in the documentation.
 
+Put guidance for coding agents in `AGENTS.md` only, not in code comments or
+`README.md`. Add it only when an agent cannot do the work correctly without it.
+
 Error messages start with a lower case letter and name what failed, for example
 `tool %q: %w`.
 
