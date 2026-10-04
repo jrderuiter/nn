@@ -661,6 +661,7 @@ mise run dist          build for macOS and Linux, amd64 and arm64
 mise run test          unit and golden tests
 mise run golden        rewrite the golden profiles
 mise run integration   tests that need the real nono binary
+mise run packs         install the nono packs that the integration tests need
 mise run lint          gofmt and go vet
 mise run check         lint and test together
 ```
@@ -669,4 +670,9 @@ The golden tests build a profile for each case under
 `internal/cli/testdata/cases` and compare it byte for byte. The integration
 tests make sure that every golden profile is valid, with
 `nono profile validate --strict`. They fail when a nono upgrade renames a key
-that `nn` generates.
+that `nn` generates. Some golden profiles extend an agent pack, so run
+`mise run packs` once before you run them.
+
+CI runs the integration tests on every push and pull request, against the nono
+version that `mise.toml` pins. A weekly run uses the latest nono. When that run
+fails, a new nono release changed something that `nn` depends on.

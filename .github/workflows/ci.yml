@@ -5,6 +5,10 @@ on:
     branches: [main]
     tags: ["v*"]
   pull_request:
+  # A weekly run against the latest nono catches a schema change before a user
+  # does.
+  schedule:
+    - cron: "0 6 * * 1"
 
 permissions:
   contents: read
@@ -17,10 +21,32 @@ jobs:
       - uses: jdx/mise-action@v2
       - run: mise run check
 
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - run: nono --version
+      - run: mise run packs
+      - run: mise run integration
+
+  integration-latest:
+    # Runs only on the schedule. A failure here means that the pinned nono
+    # version in mise.toml needs attention, not that the last commit broke.
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - run: mise use nono@latest
+      - run: nono --version
+      - run: mise run packs
+      - run: mise run integration
+
   release:
     # Only a version tag publishes binaries. A push to main runs the checks.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: check
+    needs: [check, integration]
     runs-on: ubuntu-latest
     permissions:
       contents: write
