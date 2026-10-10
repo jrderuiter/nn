@@ -679,9 +679,11 @@ In this mode, `context`, `kubeconfig`, `cluster_ca` and `allow_missing_ca` are
 errors, because a pod has no kubeconfig. To drop one of them for a run, set its
 variable to an empty value, for example `NN_TOOLS_KUBERNETES_CONTEXT=`.
 
-`service_account` is optional. If it names another account than the one of the
-pod, nono mints a token for that account with `kubectl`. The image then needs
+The agent acts as `service_account` if you set it, and otherwise as the account
+of the pod. If `service_account` names another account than the one of the pod,
+nono mints a token for that account with `kubectl`. The image then needs
 `kubectl`, and the pod needs RBAC permission to create tokens for that account.
+If it names the account of the pod, nono reads the mounted token.
 
 **More than one cluster:**
 Declare one table under `clusters` for each cluster. The key of the table is
