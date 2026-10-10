@@ -3,6 +3,8 @@ package kubernetes
 import (
 	"encoding/base64"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -30,6 +32,7 @@ type cluster struct {
 	CertificateAuthority     string `yaml:"certificate-authority,omitempty"`
 	CertificateAuthorityData string `yaml:"certificate-authority-data,omitempty"`
 	InsecureSkipTLSVerify    bool   `yaml:"insecure-skip-tls-verify,omitempty"`
+	TLSServerName            string `yaml:"tls-server-name,omitempty"`
 }
 
 type namedContext struct {
@@ -175,11 +178,13 @@ func (r *resolved) caBytes() ([]byte, error) {
 // through the user trust store, which Go reads there, and elsewhere through the
 // trust bundle variables it sets, which Go reads instead.
 func proxyKubeconfig(name, server, namespace, tokenEnv string) ([]byte, error) {
-	kc := kubeconfig{
-		APIVersion:     "v1",
-		Kind:           "Config",
-		CurrentContext: name,
-		Clusters:       []namedCluster{{Name: name, Cluster: cluster{Server: server}}},
+	return yaml.Marshal(combine(name, []kubeconfig{proxyEntry(name, server, namespace, tokenEnv)}))
+}
+
+// proxyEntry is the cluster, context and user of one cluster in proxy mode.
+func proxyEntry(name, server, namespace, tokenEnv string) kubeconfig {
+	return kubeconfig{
+		Clusters: []namedCluster{{Name: name, Cluster: cluster{Server: server}}},
 		Contexts: []namedContext{{
 			Name:    name,
 			Context: ctxDetails{Cluster: name, User: name, Namespace: namespace},
@@ -196,7 +201,6 @@ func proxyKubeconfig(name, server, namespace, tokenEnv string) ([]byte, error) {
 			},
 		}}},
 	}
-	return yaml.Marshal(kc)
 }
 
 // execScript prints an ExecCredential holding the phantom token that nono puts
@@ -243,22 +247,67 @@ func podKubeconfig(server string, id *podIdentity) ([]byte, error) {
 }
 
 // directKubeconfig builds a single-context kubeconfig that carries the host
-// context's own credentials. It is the fallback when no service account is
-// configured, and it is weaker because the credential lands inside the sandbox.
+// context's own credentials. It is the form for auth = "host", and it is weaker because the credential lands inside the sandbox.
 func directKubeconfig(name string, r *resolved, caPath string) ([]byte, error) {
+	return yaml.Marshal(combine(name, []kubeconfig{directEntry(name, r, caPath)}))
+}
+
+// directEntry is the cluster, context and user of one cluster in host mode.
+func directEntry(name string, r *resolved, caPath string) kubeconfig {
 	cl := r.Cluster
 	cl.CertificateAuthorityData = ""
 	cl.CertificateAuthority = caPath
-	kc := kubeconfig{
-		APIVersion:     "v1",
-		Kind:           "Config",
-		CurrentContext: name,
-		Clusters:       []namedCluster{{Name: name, Cluster: cl}},
+	cl = dialLoopback(cl)
+	return kubeconfig{
+		Clusters: []namedCluster{{Name: name, Cluster: cl}},
 		Contexts: []namedContext{{
 			Name:    name,
 			Context: ctxDetails{Cluster: name, User: name, Namespace: r.Namespace},
 		}},
 		Users: []namedUser{{Name: name, User: r.User}},
 	}
-	return yaml.Marshal(kc)
+}
+
+// combine joins the entries of each cluster into one kubeconfig that selects
+// current.
+func combine(current string, entries []kubeconfig) kubeconfig {
+	kc := kubeconfig{APIVersion: "v1", Kind: "Config", CurrentContext: current}
+	for _, e := range entries {
+		kc.Clusters = append(kc.Clusters, e.Clusters...)
+		kc.Contexts = append(kc.Contexts, e.Contexts...)
+		kc.Users = append(kc.Users, e.Users...)
+	}
+	return kc
+}
+
+// dialLoopback points a server on the unspecified address, which k3d writes
+// as 0.0.0.0, at the loopback address. Go bypasses the proxy only for a
+// loopback host, so kubectl sends 0.0.0.0 to the nono proxy, which refuses it.
+// tls-server-name keeps the name that the host verifies the certificate
+// against.
+func dialLoopback(cl cluster) cluster {
+	u, err := url.Parse(cl.Server)
+	if err != nil {
+		return cl
+	}
+	ip := net.ParseIP(u.Hostname())
+	if ip == nil || !ip.IsUnspecified() {
+		return cl
+	}
+	loopback := "127.0.0.1"
+	if ip.To4() == nil {
+		loopback = "::1"
+	}
+	if cl.TLSServerName == "" {
+		cl.TLSServerName = u.Hostname()
+	}
+	if port := u.Port(); port != "" {
+		u.Host = net.JoinHostPort(loopback, port)
+	} else if ip.To4() == nil {
+		u.Host = "[" + loopback + "]"
+	} else {
+		u.Host = loopback
+	}
+	cl.Server = u.String()
+	return cl
 }

@@ -1,4 +1,5 @@
-// Package kubernetes gives a sandboxed agent access to one Kubernetes cluster.
+// Package kubernetes gives a sandboxed agent access to one or more Kubernetes
+// clusters.
 //
 // nono has no Kubernetes feature of its own, so this provider assembles the
 // access out of two generic nono parts: a credential_capture entry that mints a
@@ -16,69 +17,122 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"gopkg.in/yaml.v3"
 
 	"github.com/jrderuiter/nn/internal/nono"
 	"github.com/jrderuiter/nn/internal/tool"
 	"github.com/jrderuiter/nn/internal/workspace"
 )
 
-// Config is the [tools.kubernetes] table.
+// Config is the [tools.kubernetes] table. Without clusters it describes one
+// cluster. With clusters, auth, context, service_account, cluster_ca and
+// allow_missing_ca move into each cluster, and the other settings here are
+// the defaults that every cluster shares.
 type Config struct {
+	// Auth picks how the sandbox authenticates, and has no default.
+	// "service-account" keeps every credential on the host. "host" copies the
+	// credentials of the context into the sandbox, and exists for local test
+	// clusters. "in_cluster" uses the identity that the kubelet mounted into
+	// the pod that nn runs in. nn never detects a pod on its own, because a
+	// guess would make one command reach different clusters in different
+	// places.
+	Auth string `toml:"auth"`
 	// Context names the kubeconfig context to use. Empty means the current one.
-	Context string `toml:"context" help:"kubeconfig context to use, defaulting to the current one"`
-	// ServiceAccount turns on proxy mode. nono mints a token for this existing
-	// service account on the host. nn never creates accounts or RBAC.
-	ServiceAccount string `toml:"service_account" help:"existing service account to mint a token for; turns on proxy mode"`
+	Context string `toml:"context"`
+	// ServiceAccount is the existing service account that nono mints a token
+	// for on the host. nn never creates accounts or RBAC.
+	ServiceAccount string `toml:"service_account"`
 	// ServiceAccountNamespace is where the service account lives, defaulting to
 	// "default". It is also the default namespace in the generated kubeconfig.
-	ServiceAccountNamespace string `toml:"service_account_namespace" help:"namespace the service account lives in, and the default namespace in the sandbox"`
+	ServiceAccountNamespace string `toml:"service_account_namespace"`
 	// TokenTTL is how long a minted token stays valid, for example "1h".
-	TokenTTL string `toml:"token_ttl" help:"how long a minted token stays valid, for example 1h"`
+	TokenTTL string `toml:"token_ttl"`
 	// Kubectl is the binary used to mint tokens on the host.
-	Kubectl string `toml:"kubectl" help:"kubectl binary used on the host; a real path, not a version manager shim"`
+	Kubectl string `toml:"kubectl"`
 	// Kubeconfig overrides the host kubeconfig path.
-	Kubeconfig string `toml:"kubeconfig" help:"host kubeconfig to read, defaulting to KUBECONFIG or ~/.kube/config"`
+	Kubeconfig string `toml:"kubeconfig"`
 	// ClusterCA points at a PEM file holding the cluster's certificate
 	// authority. Set it when the kubeconfig context does not carry one.
-	ClusterCA string `toml:"cluster_ca" help:"PEM file with the cluster certificate authority, when the context carries none"`
+	ClusterCA string `toml:"cluster_ca"`
 	// AllowMissingCA turns off nn's own check that a certificate authority
 	// was found. nono has no option to skip upstream verification, so this
 	// only helps when the API server uses a publicly trusted certificate.
-	AllowMissingCA bool `toml:"allow_missing_ca" help:"do not require a cluster certificate authority"`
-	// Auth names where the credentials come from: a kubeconfig on the host, or
-	// the identity the kubelet mounted into this pod. nn never detects the pod
-	// on its own: a guess would make one command mean different things in
-	// different places.
-	Auth string `toml:"auth" help:"where credentials come from: kubeconfig or in_cluster"`
-	// APIServer overrides the in-cluster address of the API server.
-	APIServer string `toml:"api_server" help:"in-cluster API server address, defaulting to https://kubernetes.default.svc"`
-	// ServiceAccountDir is where the pod identity is mounted.
-	ServiceAccountDir string `toml:"service_account_dir" help:"directory holding the mounted service account, for auth = \"in_cluster\""`
+	AllowMissingCA bool `toml:"allow_missing_ca"`
+	// APIServer is the address of the API server for auth = "in_cluster".
+	APIServer string `toml:"api_server"`
+	// ServiceAccountDir is where the pod identity is mounted, for
+	// auth = "in_cluster".
+	ServiceAccountDir string `toml:"service_account_dir"`
+	// Current names the cluster that the sandbox kubeconfig selects. It is
+	// required when there is more than one cluster.
+	Current string `toml:"current"`
+	// Clusters holds one table per cluster, keyed by the context name that
+	// the sandbox kubeconfig gives it. It is set only from nn.toml.
+	Clusters map[string]Cluster `toml:"clusters"`
 }
 
-const routeName = "k8s"
+// Cluster is one [tools.kubernetes.clusters.<name>] table. Its settings mean
+// the same as in Config, and an empty one takes the value from Config.
+type Cluster struct {
+	Auth                    string `toml:"auth"`
+	Context                 string `toml:"context"`
+	ServiceAccount          string `toml:"service_account"`
+	ServiceAccountNamespace string `toml:"service_account_namespace"`
+	TokenTTL                string `toml:"token_ttl"`
+	Kubectl                 string `toml:"kubectl"`
+	Kubeconfig              string `toml:"kubeconfig"`
+	ClusterCA               string `toml:"cluster_ca"`
+	AllowMissingCA          bool   `toml:"allow_missing_ca"`
+	APIServer               string `toml:"api_server"`
+	ServiceAccountDir       string `toml:"service_account_dir"`
+}
 
-// The values of the auth key. They name the source of the credentials, not the
-// identity: service_account picks the identity, in either source.
+// The values of auth.
 const (
-	authKubeconfig = "kubeconfig"
-	authInCluster  = "in_cluster"
+	authServiceAccount = "service-account"
+	authHost           = "host"
+	authInCluster      = "in_cluster"
 )
 
-// inCluster reports whether the credentials come from the mounted pod identity.
-func (c *Config) inCluster() bool { return c.Auth == authInCluster }
+// routeName and tokenEnv are the names of the single cluster form. A named
+// cluster adds its own suffix, so each one has its own route and token.
+const routeName = "k8s"
 
 // tokenEnv is the variable that carries the per-session phantom token into the
 // sandbox. Nothing reads it: the proxy injects the real token. nono requires
 // the field whenever credential_key uses the cmd:// scheme.
 const tokenEnv = "K8S_TOKEN"
 
+// clusterName limits a cluster key to what is safe in a route name, a
+// variable name and a file name.
+var clusterName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
+
 type provider struct {
-	cfg     Config
+	targets []*target
+	// current is the context the sandbox kubeconfig selects. Empty means the
+	// only target, under its own name.
+	current string
+}
+
+// target is one cluster and everything resolved for it.
+type target struct {
+	cfg Cluster
+	// label is the context name in the sandbox kubeconfig. Empty means the
+	// name of the host context, which is the single cluster form.
+	label    string
+	route    string
+	tokenEnv string
+	// caFile is the name of the certificate authority file, next to the
+	// sandbox kubeconfig.
+	caFile  string
 	ttl     time.Duration
 	host    string // resolved API server, filled by resolve
 	kubectl string // absolute kubectl path, filled by resolve
@@ -87,29 +141,32 @@ type provider struct {
 	kubeconfig string
 	workdir    string
 	res        *resolved
-	// saDir is where a mounted service account would be. The in-cluster mode
-	// reads it; the kubeconfig mode only asks whether it is there, to tell a
-	// missing kubeconfig apart from a pod nobody configured.
+	// saDir is where a mounted service account would be. auth = "in_cluster"
+	// reads it. The other forms only ask whether it is there, to tell a
+	// missing kubeconfig apart from a pod that nobody configured.
 	saDir string
-	// pod is the mounted identity, set only in the in-cluster mode.
+	// pod is the mounted identity, set only for auth = "in_cluster".
 	pod *podIdentity
-	// hostKubeconfig is the kubeconfig that the capture command uses to mint a
-	// token from inside the pod. It is empty unless the in-cluster mode mints.
+	// hostFile is the name of the kubeconfig that the capture command uses to
+	// mint a token from inside a pod, next to the sandbox kubeconfig.
+	hostFile string
+	// hostKubeconfig is the content of hostFile. It is empty unless
+	// auth = "in_cluster" mints a token.
 	hostKubeconfig []byte
 }
 
+// inCluster reports whether the credentials come from the mounted pod identity.
+func (p *target) inCluster() bool { return p.cfg.Auth == authInCluster }
+
 // mints reports whether the token comes from `kubectl create token` rather
-// than from a file the kubelet rotates.
-func (p *provider) mints() bool {
-	if p.cfg.ServiceAccount == "" {
-		return false
+// than from a file that the kubelet rotates.
+func (p *target) mints() bool {
+	if !p.inCluster() {
+		return p.cfg.Auth == authServiceAccount
 	}
-	if !p.cfg.inCluster() {
-		return true
-	}
-	// Minting for the account the pod already runs as would need RBAC to gain
-	// nothing, so the mounted token stands.
-	return p.pod == nil || p.cfg.ServiceAccount != p.pod.ServiceAccount
+	// Minting for the account that the pod already runs as needs RBAC and
+	// gains nothing, so the mounted token stands.
+	return p.cfg.ServiceAccount != "" && (p.pod == nil || p.cfg.ServiceAccount != p.pod.ServiceAccount)
 }
 
 func init() {
@@ -119,13 +176,108 @@ func init() {
 }
 
 func New(md toml.MetaData, prim toml.Primitive) (tool.Provider, error) {
-	// The two mode specific keys carry no default here, so that an unset key
-	// stays distinguishable from one the user wrote. checkExclusive reads that
-	// difference, and the defaults are applied below.
-	cfg := Config{TokenTTL: "1h", Kubectl: "kubectl"}
+	var cfg Config
 	if err := md.PrimitiveDecode(prim, &cfg); err != nil {
 		return nil, err
 	}
+	// The defaults apply after the decode, so an empty value means the
+	// default. A later layer cannot delete a key, and an empty string is how
+	// it hands a setting back.
+	if cfg.TokenTTL == "" {
+		cfg.TokenTTL = "1h"
+	}
+	if cfg.Kubectl == "" {
+		cfg.Kubectl = "kubectl"
+	}
+	if len(cfg.Clusters) == 0 {
+		if cfg.Current != "" {
+			return nil, fmt.Errorf("current %q names a cluster, but there is no [tools.kubernetes.clusters] table", cfg.Current)
+		}
+		t, err := newTarget(Cluster{
+			Auth: cfg.Auth, Context: cfg.Context, ServiceAccount: cfg.ServiceAccount,
+			ServiceAccountNamespace: cfg.ServiceAccountNamespace, TokenTTL: cfg.TokenTTL,
+			Kubectl: cfg.Kubectl, Kubeconfig: cfg.Kubeconfig, ClusterCA: cfg.ClusterCA,
+			AllowMissingCA: cfg.AllowMissingCA, APIServer: cfg.APIServer, ServiceAccountDir: cfg.ServiceAccountDir,
+		})
+		if err != nil {
+			return nil, withEnvHint(err)
+		}
+		t.route, t.tokenEnv, t.caFile, t.hostFile = routeName, tokenEnv, "ca.pem", "host.yaml"
+		return &provider{targets: []*target{t}}, nil
+	}
+	return newClusters(cfg)
+}
+
+// newClusters builds the named cluster form. Each cluster says for itself
+// what it is, so the keys that pick a cluster and its credentials are refused
+// at the top, where they would silently apply to all of them.
+func newClusters(cfg Config) (*provider, error) {
+	for key, set := range map[string]bool{
+		"auth": cfg.Auth != "", "context": cfg.Context != "", "service_account": cfg.ServiceAccount != "",
+		"cluster_ca": cfg.ClusterCA != "", "allow_missing_ca": cfg.AllowMissingCA,
+		"api_server": cfg.APIServer != "", "service_account_dir": cfg.ServiceAccountDir != "",
+	} {
+		if set {
+			return nil, fmt.Errorf("%s belongs in each [tools.kubernetes.clusters.<name>] table "+
+				"when clusters are declared", key)
+		}
+	}
+	names := make([]string, 0, len(cfg.Clusters))
+	for name := range cfg.Clusters {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	p := &provider{current: cfg.Current}
+	idents := map[string]string{}
+	for _, name := range names {
+		if !clusterName.MatchString(name) {
+			return nil, fmt.Errorf("cluster %q: a name holds only letters, digits, - and _", name)
+		}
+		ident := strings.ToLower(strings.ReplaceAll(name, "-", "_"))
+		if other, dup := idents[ident]; dup {
+			return nil, fmt.Errorf("clusters %q and %q would share the route %q; rename one of them",
+				other, name, routeName+"_"+ident)
+		}
+		idents[ident] = name
+		c := cfg.Clusters[name]
+		if c.ServiceAccountNamespace == "" {
+			c.ServiceAccountNamespace = cfg.ServiceAccountNamespace
+		}
+		if c.TokenTTL == "" {
+			c.TokenTTL = cfg.TokenTTL
+		}
+		if c.Kubectl == "" {
+			c.Kubectl = cfg.Kubectl
+		}
+		// A pod reads no kubeconfig, so a shared one does not apply to it.
+		if c.Kubeconfig == "" && c.Auth != authInCluster {
+			c.Kubeconfig = cfg.Kubeconfig
+		}
+		t, err := newTarget(c)
+		if err != nil {
+			return nil, fmt.Errorf("cluster %q: %w", name, err)
+		}
+		t.label = name
+		t.route = routeName + "_" + ident
+		t.tokenEnv = tokenEnv + "_" + strings.ToUpper(ident)
+		t.caFile = "ca-" + name + ".pem"
+		t.hostFile = "host-" + name + ".yaml"
+		p.targets = append(p.targets, t)
+	}
+	switch {
+	case p.current == "" && len(names) == 1:
+		p.current = names[0]
+	case p.current == "":
+		return nil, fmt.Errorf("current is required with more than one cluster; set it to one of %v", names)
+	case !slices.Contains(names, p.current):
+		return nil, fmt.Errorf("current %q is not a cluster; set it to one of %v", p.current, names)
+	}
+	return p, nil
+}
+
+// newTarget checks the settings of one cluster.
+func newTarget(cfg Cluster) (*target, error) {
 	ttl, err := time.ParseDuration(cfg.TokenTTL)
 	if err != nil {
 		return nil, fmt.Errorf("token_ttl %q is not a duration: %w", cfg.TokenTTL, err)
@@ -133,89 +285,139 @@ func New(md toml.MetaData, prim toml.Primitive) (tool.Provider, error) {
 	if ttl < time.Minute {
 		return nil, fmt.Errorf("token_ttl must be at least one minute, got %s", cfg.TokenTTL)
 	}
+	// auth has no default, so the choice between the two forms is always
+	// written down. The weaker form puts the host credentials, often a cluster
+	// admin, into the sandbox, and must never be what a missing key means.
 	switch cfg.Auth {
 	case "":
-		cfg.Auth = authKubeconfig
-	case authKubeconfig, authInCluster:
-	default:
-		return nil, fmt.Errorf("auth %q is not a source of credentials; it is %q or %q",
-			cfg.Auth, authKubeconfig, authInCluster)
-	}
-	if err := checkExclusive(&cfg); err != nil {
-		return nil, err
-	}
-	if cfg.inCluster() {
-		if cfg.APIServer == "" {
-			cfg.APIServer = defaultAPIServer
+		return nil, fmt.Errorf("auth is required: set auth = %q to mint a token for service_account on the host, "+
+			"auth = %q to copy the context credentials into the sandbox, "+
+			"or auth = %q to use the identity of this pod", authServiceAccount, authHost, authInCluster)
+	case authInCluster:
+		return newInClusterTarget(cfg, ttl)
+	case authServiceAccount:
+		if cfg.ServiceAccount == "" {
+			return nil, fmt.Errorf("auth %q needs service_account; set auth = %q to copy the "+
+				"context credentials into the sandbox instead", authServiceAccount, authHost)
 		}
-	} else if cfg.ServiceAccountNamespace == "" {
-		// In a pod the namespace comes from the mounted file instead, which
-		// resolve fills in.
+	case authHost:
+		if cfg.ServiceAccount != "" {
+			return nil, fmt.Errorf("auth %q uses the context credentials, so service_account %q would be ignored; "+
+				"remove one of them", authHost, cfg.ServiceAccount)
+		}
+	default:
+		return nil, fmt.Errorf("auth must be %q, %q or %q, got %q", authServiceAccount, authHost, authInCluster, cfg.Auth)
+	}
+	for _, k := range []struct {
+		name string
+		set  bool
+	}{{"api_server", cfg.APIServer != ""}, {"service_account_dir", cfg.ServiceAccountDir != ""}} {
+		if k.set {
+			return nil, &keyError{key: k.name, msg: fmt.Sprintf("%s only applies with auth = %q, and auth is %q",
+				k.name, authInCluster, cfg.Auth)}
+		}
+	}
+	if cfg.ServiceAccountNamespace == "" {
 		cfg.ServiceAccountNamespace = "default"
 	}
-	saDir := cfg.ServiceAccountDir
-	if saDir == "" {
-		saDir = defaultServiceAccountDir
-	}
-	return &provider{cfg: cfg, ttl: ttl, saDir: saDir}, nil
+	return &target{cfg: cfg, ttl: ttl, saDir: serviceAccountDir(cfg)}, nil
 }
 
-// checkExclusive rejects a key that cannot apply in the chosen mode.
+// newInClusterTarget checks the settings of a cluster that uses the pod
+// identity.
 //
-// nn could ignore such a key instead. It does not, because a configuration that
-// names a context is a statement about which cluster the agent reaches, and
-// silently dropping it would hand the agent a different cluster than the file
-// describes.
-func checkExclusive(cfg *Config) error {
-	if !cfg.inCluster() {
-		for _, k := range []struct {
-			name string
-			set  bool
-		}{
-			{"api_server", cfg.APIServer != ""},
-			{"service_account_dir", cfg.ServiceAccountDir != ""},
-		} {
-			if k.set {
-				return fmt.Errorf("%s only applies with auth = %q, and auth is %q.\n"+
-					"  Change auth, or set %s= with an empty value for this run",
-					k.name, authInCluster, cfg.Auth, envVarFor(k.name))
-			}
-		}
-		return nil
-	}
-	// The order is fixed so the message is the same on every run.
+// It refuses a key that describes a kubeconfig instead of ignoring it. A
+// context names the cluster that the agent reaches, and dropping it in silence
+// would give the agent a different cluster than the file describes.
+func newInClusterTarget(cfg Cluster, ttl time.Duration) (*target, error) {
+	// The order is fixed, so that the message is the same on every run.
 	for _, k := range []struct {
 		name string
 		set  bool
 		why  string
 	}{
 		{"context", cfg.Context != "", "a pod has no kubeconfig to take a context from"},
-		{"kubeconfig", cfg.Kubeconfig != "", "this source reads no kubeconfig"},
-		{"cluster_ca", cfg.ClusterCA != "", "the mounted ca.crt is the cluster's own authority"},
-		{"allow_missing_ca", cfg.AllowMissingCA, "the authority is always mounted in a pod"},
+		{"kubeconfig", cfg.Kubeconfig != "", "this form reads no kubeconfig"},
+		{"cluster_ca", cfg.ClusterCA != "", "the mounted ca.crt is the authority of the cluster"},
+		{"allow_missing_ca", cfg.AllowMissingCA, "a pod always has the authority mounted"},
 	} {
-		if !k.set {
-			continue
+		if k.set {
+			return nil, &keyError{key: k.name, msg: fmt.Sprintf("auth is %q, so %s does not apply: %s",
+				authInCluster, k.name, k.why)}
 		}
-		return fmt.Errorf("auth is %q, so %s has no meaning: %s.\n"+
-			"  Remove %s from the configuration, or set %s= with an empty value for this run",
-			authInCluster, k.name, k.why, k.name, envVarFor(k.name))
 	}
-	return nil
+	if cfg.APIServer == "" {
+		cfg.APIServer = defaultAPIServer
+	}
+	// The namespace stays empty here, so that resolve can take the one that
+	// is mounted.
+	return &target{cfg: cfg, ttl: ttl, saDir: serviceAccountDir(cfg)}, nil
 }
 
-// envVarFor names the variable that overrides one key, which is the escape a
-// pod spec uses to drop a value that a committed nn.toml sets.
-func envVarFor(key string) string {
-	return "NN_TOOLS_KUBERNETES_" + strings.ToUpper(key)
+func serviceAccountDir(cfg Cluster) string {
+	if cfg.ServiceAccountDir == "" {
+		return defaultServiceAccountDir
+	}
+	return cfg.ServiceAccountDir
+}
+
+// keyError is a key that does not apply to the chosen auth.
+type keyError struct {
+	key string
+	msg string
+}
+
+func (e *keyError) Error() string { return e.msg }
+
+// withEnvHint names the variable that drops a key for one run. That is how a
+// pod spec removes a value that a committed nn.toml sets. A named cluster is
+// set only from nn.toml, so only the single form gets the hint.
+func withEnvHint(err error) error {
+	var ke *keyError
+	if !errors.As(err, &ke) {
+		return err
+	}
+	return fmt.Errorf("%s.\n  Remove %s from the configuration, or set NN_TOOLS_KUBERNETES_%s= "+
+		"with an empty value for this run", ke.msg, ke.key, strings.ToUpper(ke.key))
 }
 
 func (p *provider) Name() string { return "kubernetes" }
 
+// errorf names the cluster in the named form, and leaves the single form
+// messages as they are.
+func (t *target) errorf(err error) error {
+	if t.label == "" || err == nil {
+		return err
+	}
+	return fmt.Errorf("cluster %q: %w", t.label, err)
+}
+
+// resolveAll resolves every target, then makes sure that the proxy can tell
+// them apart.
+func (p *provider) resolveAll(e *tool.Env) error {
+	for _, t := range p.targets {
+		if err := t.errorf(t.resolve(e)); err != nil {
+			return err
+		}
+	}
+	// nono picks a route by upstream host alone. Two clusters behind one API
+	// server would share the route, and one of them would get the other's
+	// token, or a host credential would be replaced on the way.
+	for i, a := range p.targets {
+		for _, b := range p.targets[i+1:] {
+			if a.host == b.host && (a.cfg.Auth != authHost || b.cfg.Auth != authHost) {
+				return fmt.Errorf("clusters %q and %q both use the API server %s; "+
+					"the proxy picks a token by host, so keep one of them", a.label, b.label, a.host)
+			}
+		}
+	}
+	return nil
+}
+
 // resolve works out everything Build needs. It reads files but changes
 // nothing, so both Preflight and Build can call it.
-func (p *provider) resolve(e *tool.Env) error {
-	if p.cfg.inCluster() {
+func (p *target) resolve(e *tool.Env) error {
+	if p.inCluster() {
 		return p.resolveInCluster(e)
 	}
 	path := p.cfg.Kubeconfig
@@ -254,7 +456,7 @@ func (p *provider) resolve(e *tool.Env) error {
 		p.kubeconfig = path
 	}
 
-	if p.cfg.ServiceAccount == "" {
+	if p.cfg.Auth == authHost {
 		return nil
 	}
 	p.kubectl, err = resolveKubectl(p.cfg.Kubectl)
@@ -264,14 +466,14 @@ func (p *provider) resolve(e *tool.Env) error {
 	return p.checkCA()
 }
 
-// resolveInCluster fills the same fields the kubeconfig path fills, from the
-// identity the kubelet mounted, so that everything downstream stays the same.
-func (p *provider) resolveInCluster(e *tool.Env) error {
+// resolveInCluster fills the same fields as resolve, from the identity that
+// the kubelet mounted, so that Build works the same for both.
+func (p *target) resolveInCluster(e *tool.Env) error {
 	dir := p.saDir
 	if !filepath.IsAbs(dir) {
-		// A relative path means relative to the project, as it does for
-		// kubeconfig. Nothing needs it in a real pod, where the mount point is
-		// absolute, but it is what lets a test describe a whole pod identity.
+		// A relative path is relative to the project, as for kubeconfig. A
+		// real pod mounts an absolute path, but a test can then describe a
+		// whole pod identity.
 		dir = filepath.Join(e.Workdir, dir)
 	}
 	id, err := readPodIdentity(dir)
@@ -282,32 +484,28 @@ func (p *provider) resolveInCluster(e *tool.Env) error {
 	if err != nil || u.Host == "" {
 		return fmt.Errorf("api_server %q is not a usable URL", p.cfg.APIServer)
 	}
-	ns := p.cfg.ServiceAccountNamespace
-	if ns == "" {
-		ns = id.Namespace
+	// An explicit namespace says where an account lives, so it wins over the
+	// namespace of the pod.
+	if p.cfg.ServiceAccountNamespace == "" {
+		p.cfg.ServiceAccountNamespace = id.Namespace
 	}
 	p.pod = id
 	p.workdir = e.Workdir
 	p.host = u.Host
-	// The mounted ca.crt goes in as a file path, which is a form the kubeconfig
-	// reader already understands, so caBytes and checkCA need no change.
+	// The kubeconfig reader already understands the mounted ca.crt as a file
+	// path, so caBytes and checkCA need no change.
 	p.res = &resolved{
 		ContextName: "in-cluster",
 		Cluster:     cluster{Server: p.cfg.APIServer, CertificateAuthority: id.CAFile},
-		Namespace:   ns,
+		Namespace:   p.cfg.ServiceAccountNamespace,
 	}
-	// The namespace is also what the generated kubeconfig and any minted token
-	// use, and both read it from the configuration.
-	p.cfg.ServiceAccountNamespace = ns
-
-	if !p.mints() {
-		return p.checkCA()
-	}
-	if p.kubectl, err = resolveKubectl(p.cfg.Kubectl); err != nil {
-		return err
-	}
-	if p.hostKubeconfig, err = podKubeconfig(p.cfg.APIServer, id); err != nil {
-		return err
+	if p.mints() {
+		if p.kubectl, err = resolveKubectl(p.cfg.Kubectl); err != nil {
+			return err
+		}
+		if p.hostKubeconfig, err = podKubeconfig(p.cfg.APIServer, id); err != nil {
+			return err
+		}
 	}
 	return p.checkCA()
 }
@@ -317,7 +515,7 @@ func (p *provider) resolveInCluster(e *tool.Env) error {
 // Without a certificate authority the proxy falls back to the system roots,
 // and a cluster with a private authority then fails at the first request with
 // "TLS handshake failed: invalid peer certificate: UnknownIssuer".
-func (p *provider) checkCA() error {
+func (p *target) checkCA() error {
 	if p.cfg.AllowMissingCA {
 		return nil
 	}
@@ -337,7 +535,7 @@ func (p *provider) checkCA() error {
 }
 
 // caBytes returns the cluster authority, preferring the explicit file.
-func (p *provider) caBytes() ([]byte, error) {
+func (p *target) caBytes() ([]byte, error) {
 	if p.cfg.ClusterCA != "" {
 		path := p.cfg.ClusterCA
 		if !filepath.IsAbs(path) {
@@ -353,22 +551,29 @@ func (p *provider) caBytes() ([]byte, error) {
 }
 
 func (p *provider) Preflight(ctx context.Context, e *tool.Env) error {
-	if err := p.resolve(e); err != nil {
+	if err := p.resolveAll(e); err != nil {
 		return err
 	}
-	if !p.cfg.inCluster() && p.cfg.ServiceAccount == "" {
-		// The direct form carries the host credentials as they are. There is
-		// no command to try.
+	for _, t := range p.targets {
+		if err := t.errorf(t.probe(ctx)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// probe mints one token, as nono will at launch.
+func (p *target) probe(ctx context.Context) error {
+	if p.cfg.Auth == authHost {
 		return nil
 	}
 	// Running the capture here turns a confusing runtime warning into a clear
 	// message. nono runs the same command later, with the same stripped
 	// environment, so a failure now is a failure then.
 	kubeconfig := p.kubeconfig
-	if p.cfg.inCluster() && p.mints() {
-		// Build finally writes this file into the artifact directory, but
-		// Preflight runs before nn writes anything, so the probe gets its own
-		// copy.
+	if len(p.hostKubeconfig) > 0 {
+		// nn writes the artifacts only after Preflight, so the probe needs a
+		// copy of its own.
 		path, cleanup, err := writeTemp(p.hostKubeconfig)
 		if err != nil {
 			return err
@@ -377,7 +582,6 @@ func (p *provider) Preflight(ctx context.Context, e *tool.Env) error {
 		kubeconfig = path
 	}
 	argv := p.tokenCommand(kubeconfig)
-
 	probe, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(probe, argv[0], argv[1:]...)
@@ -390,8 +594,7 @@ func (p *provider) Preflight(ctx context.Context, e *tool.Env) error {
 			detail = strings.TrimSpace(string(ee.Stderr))
 		}
 		if !p.mints() {
-			return fmt.Errorf("cannot read the service account token with %s: %s",
-				strings.Join(argv, " "), detail)
+			return fmt.Errorf("cannot read the service account token with %s: %s", strings.Join(argv, " "), detail)
 		}
 		return fmt.Errorf("cannot mint a token for service account %q in namespace %q: %s",
 			p.cfg.ServiceAccount, p.cfg.ServiceAccountNamespace, detail)
@@ -402,19 +605,15 @@ func (p *provider) Preflight(ctx context.Context, e *tool.Env) error {
 	return nil
 }
 
-// writeTemp puts content in a private file and returns a function that removes
-// it again.
+// writeTemp puts content in a private file and returns a function that
+// removes it again.
 func writeTemp(content []byte) (string, func(), error) {
 	f, err := os.CreateTemp("", "nn-kubeconfig-*")
 	if err != nil {
 		return "", nil, err
 	}
 	cleanup := func() { os.Remove(f.Name()) }
-	if err := f.Chmod(0o600); err != nil {
-		f.Close()
-		cleanup()
-		return "", nil, err
-	}
+	// CreateTemp already makes the file private to the user.
 	if _, err := f.Write(content); err != nil {
 		f.Close()
 		cleanup()
@@ -477,85 +676,64 @@ func captureEnv() []string {
 }
 
 func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error) {
-	if p.res == nil {
-		if err := p.resolve(e); err != nil {
+	if p.targets[0].res == nil {
+		if err := p.resolveAll(e); err != nil {
 			return nil, err
 		}
 	}
-	if !p.cfg.inCluster() && p.cfg.ServiceAccount == "" {
-		return p.buildDirect(e)
-	}
-	return p.buildProxy(e)
-}
-
-// buildProxy is the default form. kubectl talks to the real API server, and
-// nono's proxy intercepts the connection, adds the bearer token and verifies
-// the cluster certificate on the far side. The token never enters the sandbox.
-func (p *provider) buildProxy(e *tool.Env) (*tool.Result, error) {
-	ca, err := p.caBytes()
-	if err != nil {
-		return nil, err
-	}
-
 	kubeDir := workspace.ProfileVar + "/kube"
-	cfgBytes, err := proxyKubeconfig(p.name(), p.res.Cluster.Server, p.cfg.ServiceAccountNamespace, tokenEnv)
+	network := &nono.Network{}
+	var captures map[string]nono.CredentialCapture
+	var entries []kubeconfig
+	var artifacts []tool.Artifact
+	for _, t := range p.targets {
+		var part *part
+		var err error
+		if t.cfg.Auth == authHost {
+			part, err = t.buildDirect()
+		} else {
+			part, err = t.buildProxy(e, kubeDir)
+		}
+		if err != nil {
+			return nil, t.errorf(err)
+		}
+		entries = append(entries, part.entry)
+		artifacts = append(artifacts, part.artifacts...)
+		if part.route != nil {
+			if captures == nil {
+				captures = map[string]nono.CredentialCapture{}
+				network.CustomCredentials = map[string]nono.CustomCredential{}
+			}
+			captures[t.route] = part.capture
+			network.Credentials = append(network.Credentials, t.route)
+			network.CustomCredentials[t.route] = *part.route
+		}
+		if part.port != 0 && !slices.Contains(network.OpenPort, part.port) {
+			network.OpenPort = append(network.OpenPort, part.port)
+		}
+		if part.domain != "" && !slices.ContainsFunc(network.AllowDomain, func(d nono.Domain) bool { return d.Domain == part.domain }) {
+			network.AllowDomain = append(network.AllowDomain, nono.Domain{Domain: part.domain})
+		}
+	}
+	current := p.current
+	if current == "" {
+		current = p.targets[0].name()
+	}
+	cfgBytes, err := yaml.Marshal(combine(current, entries))
 	if err != nil {
 		return nil, err
 	}
-
-	artifacts := []tool.Artifact{
-		{RelPath: "kube/config", Mode: 0o600, Content: cfgBytes},
-	}
-	// captureKubeconfig is what the token command reads on the host, which is
-	// not the file the sandbox reads.
-	captureKubeconfig := p.kubeconfig
-	if len(p.hostKubeconfig) > 0 {
-		captureKubeconfig = filepath.Join(e.ArtifactDir, "kube", "host.yaml")
-		artifacts = append(artifacts, tool.Artifact{
-			RelPath: "kube/host.yaml", Mode: 0o600, Content: p.hostKubeconfig,
-		})
-	}
-
-	route := nono.CustomCredential{
-		Upstream:      "https://" + p.host,
-		CredentialKey: "cmd://" + routeName,
-		EnvVar:        tokenEnv,
-		InjectMode:    "header",
-		InjectHeader:  "Authorization",
-		CredentialFmt: "Bearer {}",
-	}
-	if len(ca) > 0 {
-		// This is the cluster's own certificate authority. It belongs to the
-		// leg between nono and the API server, which is the leg that still
-		// proves the cluster's identity.
-		//
-		// tls_ca resolves $WORKDIR from the environment rather than expanding
-		// it as a profile variable, which is why nn sets WORKDIR on the nono
-		// process. Keeping the spelling relative is what makes the generated
-		// profile the same on every machine.
-		route.TLSCA = kubeDir + "/ca.pem"
-		artifacts = append(artifacts, tool.Artifact{RelPath: "kube/ca.pem", Mode: 0o644, Content: ca})
-	}
+	artifacts = append(artifacts, tool.Artifact{RelPath: "kube/config", Mode: 0o600, Content: cfgBytes})
 
 	f := &nono.Profile{
-		CredentialCapture: map[string]nono.CredentialCapture{
-			routeName: {
-				Command:      p.tokenCommand(captureKubeconfig),
-				TimeoutSecs:  30,
-				CacheTTLSecs: p.cacheTTLSecs(),
-			},
-		},
-		Network: &nono.Network{
-			Credentials:       []string{routeName},
-			CustomCredentials: map[string]nono.CustomCredential{routeName: route},
-			AllowDomain:       []nono.Domain{{Domain: hostOnly(p.host)}},
-		},
+		CredentialCapture: captures,
+		Network:           network,
 		// No filesystem grant: kubeDir sits inside the artifact directory,
 		// which the base profile already grants recursively.
 		Environment: &nono.Environment{
 			// KUBERNETES_* is what a kubelet sets inside a pod; nothing here
-			// produces it. The phantom token needs no entry either: nono
-			// injects it after this filter runs, and both names below go
+			// produces it. The phantom tokens need no entry either: nono
+			// injects them after this filter runs, and both names below go
 			// through set_vars, which nono applies after it too.
 			SetVars: map[string]string{
 				"KUBECONFIG": kubeDir + "/config",
@@ -574,51 +752,113 @@ func (p *provider) buildProxy(e *tool.Env) (*tool.Result, error) {
 	return &tool.Result{Fragment: f, Artifacts: artifacts}, nil
 }
 
-// buildDirect is the fallback without a service account. It copies the host
-// context's own credentials into the sandbox, which is weaker, and it does not
-// work for a context whose credentials come from an exec plugin.
-func (p *provider) buildDirect(e *tool.Env) (*tool.Result, error) {
+// part is what one cluster adds to the profile and to the sandbox kubeconfig.
+type part struct {
+	entry     kubeconfig
+	artifacts []tool.Artifact
+	// route and capture are set for every form except host.
+	route   *nono.CustomCredential
+	capture nono.CredentialCapture
+	// domain is the host to allow, and port the local port to open instead.
+	domain string
+	port   int
+}
+
+// buildProxy is the service-account form. kubectl talks to the real API
+// server, and nono's proxy intercepts the connection, adds the bearer token
+// and verifies the cluster certificate on the far side. The token never
+// enters the sandbox.
+//
+// The in_cluster form is the same, with a token from the pod identity.
+func (p *target) buildProxy(e *tool.Env, kubeDir string) (*part, error) {
+	ca, err := p.caBytes()
+	if err != nil {
+		return nil, err
+	}
+	var artifacts []tool.Artifact
+	// The token command reads this kubeconfig on the host side. The sandbox
+	// reads a different one.
+	captureKubeconfig := p.kubeconfig
+	if len(p.hostKubeconfig) > 0 {
+		captureKubeconfig = filepath.Join(e.ArtifactDir, "kube", p.hostFile)
+		artifacts = append(artifacts, tool.Artifact{RelPath: "kube/" + p.hostFile, Mode: 0o600, Content: p.hostKubeconfig})
+	}
+	route := nono.CustomCredential{
+		Upstream:      "https://" + p.host,
+		CredentialKey: "cmd://" + p.route,
+		EnvVar:        p.tokenEnv,
+		InjectMode:    "header",
+		InjectHeader:  "Authorization",
+		CredentialFmt: "Bearer {}",
+	}
+	out := &part{
+		entry: proxyEntry(p.name(), p.res.Cluster.Server, p.cfg.ServiceAccountNamespace, p.tokenEnv),
+		route: &route,
+		capture: nono.CredentialCapture{
+			Command:      p.tokenCommand(captureKubeconfig),
+			TimeoutSecs:  30,
+			CacheTTLSecs: p.cacheTTLSecs(),
+		},
+		artifacts: artifacts,
+		domain:    hostOnly(p.host),
+	}
+	if len(ca) > 0 {
+		// This is the cluster's own certificate authority. It belongs to the
+		// leg between nono and the API server, which is the leg that still
+		// proves the cluster's identity.
+		//
+		// tls_ca resolves $WORKDIR from the environment rather than expanding
+		// it as a profile variable, which is why nn sets WORKDIR on the nono
+		// process. Keeping the spelling relative is what makes the generated
+		// profile the same on every machine.
+		route.TLSCA = kubeDir + "/" + p.caFile
+		out.artifacts = append(out.artifacts, tool.Artifact{RelPath: "kube/" + p.caFile, Mode: 0o644, Content: ca})
+	}
+	return out, nil
+}
+
+// buildDirect is the host form. It copies the host context's own credentials
+// into the sandbox, which is weaker, and it does not work for a context whose
+// credentials come from an exec plugin.
+func (p *target) buildDirect() (*part, error) {
 	if _, isExec := p.res.User["exec"]; isExec {
 		return nil, fmt.Errorf(
 			"context %q authenticates with an exec plugin, which cannot run inside the sandbox; "+
-				"set service_account to use the proxy form instead", p.res.ContextName)
+				"set auth = %q and service_account to use the proxy form instead", p.res.ContextName, authServiceAccount)
 	}
 	ca, err := p.caBytes()
 	if err != nil {
 		return nil, err
 	}
-	kubeDir := workspace.ProfileVar + "/kube"
+	out := &part{}
 	var caPath string
-	artifacts := []tool.Artifact{}
 	if len(ca) > 0 {
-		caPath = kubeDir + "/ca.pem"
-		artifacts = append(artifacts, tool.Artifact{RelPath: "kube/ca.pem", Mode: 0o644, Content: ca})
+		// kubectl reads this path, not nono, so it cannot use the $WORKDIR
+		// spelling of the profile. kubectl resolves a relative path against
+		// the directory of the kubeconfig, which is where the file lands.
+		caPath = p.caFile
+		out.artifacts = append(out.artifacts, tool.Artifact{RelPath: "kube/" + p.caFile, Mode: 0o644, Content: ca})
 	}
-	cfgBytes, err := directKubeconfig(p.name(), p.res, caPath)
-	if err != nil {
-		return nil, err
+	out.entry = directEntry(p.name(), p.res, caPath)
+	if port, ok := loopbackPort(p.host); ok {
+		// Go never sends a loopback address through a proxy, so kubectl
+		// connects straight to the port, and the proxy's domain list does
+		// not apply. macOS offers no connect-only grant, so open_port also
+		// lets the sandbox listen on the port, which the cluster holds.
+		out.port = port
+	} else {
+		out.domain = hostOnly(p.host)
 	}
-	artifacts = append(artifacts, tool.Artifact{RelPath: "kube/config", Mode: 0o600, Content: cfgBytes})
-
-	f := &nono.Profile{
-		Network: &nono.Network{AllowDomain: []nono.Domain{{Domain: hostOnly(p.host)}}},
-		Environment: &nono.Environment{
-			SetVars: map[string]string{
-				"KUBECONFIG":   kubeDir + "/config",
-				"KUBECACHEDIR": kubeDir + "/cache",
-			},
-		},
-	}
-	return &tool.Result{Fragment: f, Artifacts: artifacts}, nil
+	return out, nil
 }
 
-// tokenCommand is the argv nono runs on the host to mint a token. It runs
-// outside the sandbox, with the user's own cluster credentials.
-func (p *provider) tokenCommand(kubeconfig string) []string {
-	if p.cfg.inCluster() && !p.mints() {
-		// The kubelet rotates this file in place, so re-reading it is the
-		// whole refresh mechanism. It needs no kubectl, which matters for an
-		// agent image that carries none.
+// tokenCommand is the argv nono runs on the host to get a token. It runs
+// outside the sandbox, with the user's own cluster credentials. kubeconfig is
+// the file that kubectl reads, and empty means its default.
+func (p *target) tokenCommand(kubeconfig string) []string {
+	if p.inCluster() && !p.mints() {
+		// The kubelet rotates this file in place, so a fresh read is the whole
+		// refresh. It needs no kubectl, and an agent image often has none.
 		return []string{"/bin/cat", p.pod.TokenFile}
 	}
 	bin := p.kubectl
@@ -642,11 +882,11 @@ func (p *provider) tokenCommand(kubeconfig string) []string {
 
 // cacheTTLSecs keeps the cached token comfortably inside its own lifetime, so
 // a cached value never outlives the token it holds.
-func (p *provider) cacheTTLSecs() int {
-	if p.cfg.inCluster() && !p.mints() {
-		// token_ttl describes a token that nn asks for. The kubelet's token
-		// has a lifetime nn did not choose and cannot read, so the only safe
-		// answer is to re-read the file often. Reading a file costs nothing.
+func (p *target) cacheTTLSecs() int {
+	if p.inCluster() && !p.mints() {
+		// token_ttl describes a token that nn asks for. nn cannot read the
+		// lifetime of the kubelet token, so it reads the file again each
+		// minute, which costs nothing.
 		return 60
 	}
 	secs := int(p.ttl.Seconds() * 0.8)
@@ -656,14 +896,35 @@ func (p *provider) cacheTTLSecs() int {
 	return secs
 }
 
-func (p *provider) name() string {
+func (p *target) name() string {
+	if p.label != "" {
+		return p.label
+	}
 	if p.cfg.Context != "" {
 		return p.cfg.Context
 	}
 	return p.res.ContextName
 }
 
-// hostOnly drops the port. api_server may name an IPv6 address, whose own
+// loopbackPort returns the port of an API server on this machine, as a local
+// test cluster such as k3d runs it. A server without a port uses 443.
+func loopbackPort(hostPort string) (int, bool) {
+	host, portText, err := net.SplitHostPort(hostPort)
+	if err != nil {
+		host, portText = hostPort, "443"
+	}
+	ip := net.ParseIP(host)
+	if host != "localhost" && (ip == nil || !(ip.IsLoopback() || ip.IsUnspecified())) {
+		return 0, false
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		return 0, false
+	}
+	return port, true
+}
+
+// hostOnly drops the port. api_server can name an IPv6 address, whose own
 // colons make a plain cut wrong.
 func hostOnly(hostPort string) string {
 	if h, _, err := net.SplitHostPort(hostPort); err == nil {

@@ -2,6 +2,7 @@
 extends = ["nolabs-ai/claude"]
 
 [tools.mise]
+trust_workdir = true
 
 [tools.git]
 name = "Test User"
@@ -9,7 +10,13 @@ email = "test@example.com"
 
 [tools.github]
 
+[tools.azure_devops]
+organization = "acme"
+project = "Platform"
+projects = ["Platform"]
+
 [tools.kubernetes]
+auth = "service-account"
 context = "prod-eks"
 service_account = "claude-ro"
 service_account_namespace = "apps"

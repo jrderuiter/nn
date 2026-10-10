@@ -4,73 +4,67 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 )
 
-var opts options
-
 // Execute runs the command line and returns the process exit code.
+//
+// An interrupt cancels the context rather than killing nn outright, so a fnox
+// or kubectl call that waits for a touch or a password stops with it, and nn
+// reports the cancel as an error.
 func Execute() int {
-	root := newRoot()
-	if err := root.Execute(); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	root := newRoot(&options{})
+	if err := root.ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "nn: "+err.Error())
 		return 1
 	}
 	return 0
 }
 
-func newRoot() *cobra.Command {
+// newRoot builds the command tree around opts. The flags write into opts, and
+// every command reads from it, so a test can hand in a fixture such as
+// gitRemotes before it runs a command.
+func newRoot(opts *options) *cobra.Command {
 	root := &cobra.Command{
-		Use:   "nn [flags] -- <command> [args...]",
-		Short: "Run a command in a nono sandbox, built from declared capabilities",
+		Use:   "nn",
+		Short: "Run a command in a nono sandbox, built from declared tools",
 		Long: strings.TrimSpace(`
 nn builds a nono profile from the tools declared in nn.toml, writes the files
 that profile refers to, and runs nono with it.
 
-  nn -- claude          run claude with this project's tools
+  nn run -- claude      run claude with this project's tools
+  nn run --agent claude -- bash
+                        run bash in the sandbox that claude gets
   nn init               generate the sandbox files without running anything
+  nn profile            print the generated profile
   nn doctor             check the configuration
   nn example            print a complete example nn.toml
 `),
-		Version:               Version,
-		SilenceUsage:          true,
-		SilenceErrors:         true,
-		DisableFlagsInUseLine: true,
-		Args:                  cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCommand(cmd, args)
-		},
+		Version:       Version,
+		SilenceUsage:  true,
+		SilenceErrors: true,
 	}
 	root.SetVersionTemplate(versionString())
 
 	pf := root.PersistentFlags()
 	pf.StringVar(&opts.configPath, "config", "", "path to nn.toml, skipping the upward search")
-	pf.StringArrayVar(&opts.only, "tool", nil, "use only this tool (repeatable)")
-	pf.StringArrayVar(&opts.skip, "no-tool", nil, "skip this tool (repeatable)")
 	pf.StringVar(&opts.workdir, "workdir", "", "working directory, defaulting to the current one")
-	pf.BoolVar(&dryRun, "dry-run", false, "print the nono command instead of running it")
-	pf.BoolVarP(&verbose, "verbose", "v", false, "print the nono command and the files written")
-	pf.BoolVar(&showBanner, "banner", false, "show nono's capability table and status lines")
-	pf.BoolVar(&showDiagnostics, "diagnostics", false, "show nono's report of the paths it blocked")
+	pf.StringVar(&opts.agent, "agent", "", "apply the [agents.<name>] section with this `name`, whatever the command")
 
-	// Cobra takes -v for --version unless the flag already exists, and -v is
-	// more useful as verbose.
+	// Cobra takes -v for --version unless the flag already exists. -V keeps
+	// the version apart from -v, which is verbose on nn run.
 	root.Flags().BoolP("version", "V", false, "version for nn")
 
-	root.AddCommand(newRunCmd(), newInitCmd(), newDoctorCmd(), newExampleCmd())
+	root.AddCommand(newRunCmd(opts), newInitCmd(opts), newProfileCmd(opts), newDoctorCmd(opts), newExampleCmd())
 	return root
-}
-
-// splitAtDash separates nn's own arguments from the sandboxed command.
-func splitAtDash(cmd *cobra.Command, args []string) (before, after []string) {
-	d := cmd.ArgsLenAtDash()
-	if d < 0 {
-		return args, nil
-	}
-	return args[:d], args[d:]
 }
 
 // commandFor extracts the sandboxed command. Everything after -- belongs to the
@@ -82,33 +76,15 @@ func commandFor(cmd *cobra.Command, args []string) []string {
 	return args
 }
 
-func runCommand(cmd *cobra.Command, args []string) error {
-	command := commandFor(cmd, args)
-	if len(command) == 0 {
-		return errNoCommand
-	}
-	if err := requireConfig(opts); err != nil {
-		return err
-	}
-	p, err := build(context.Background(), opts, command)
-	if err != nil {
-		return err
-	}
-	if err := p.write(); err != nil {
-		return err
-	}
-	return runExec(p)
-}
-
-func runExec(p *plan) error {
+func runExec(ctx context.Context, p *plan, stdout io.Writer) error {
 	args := p.runArgs()
-	if verbose {
+	if p.opts.verbose {
 		p.trace(args)
 	}
-	if dryRun {
+	if p.opts.dryRun {
 		// stdout, so the command can be piped straight into a shell.
-		fmt.Println("nono " + strings.Join(quoteArgs(args), " "))
+		fmt.Fprintln(stdout, "nono "+strings.Join(quoteArgs(args), " "))
 		return nil
 	}
-	return execPlan(context.Background(), p)
+	return execPlan(ctx, p)
 }

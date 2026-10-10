@@ -1,5 +1,8 @@
 [tools]
-go = "1.25"
+go = "1.27"
+# The integration tests validate against this version. The weekly CI run
+# tries the latest one, and tells you when to raise it.
+nono = "0.79.0"
 
 [tasks.build]
 description = "Build the nn binary into bin/"
@@ -45,6 +48,16 @@ run = "go test ./internal/cli -update"
 description = "Run the tests that need the real nono binary"
 run = "go test -tags integration ./..."
 
+[tasks.packs]
+description = "Install the nono packs that the golden profiles extend"
+# A built in profile such as "default" has no namespace and needs no pull.
+run = """
+set -eu
+for pack in $(jq -r '.extends[]? // empty' internal/cli/testdata/golden/*.json | grep / | sort -u); do
+  nono pull --silent "$pack"
+done
+"""
+
 [tasks.lint]
 description = "Report unformatted files and vet problems"
 run = ["gofmt -l .", "go vet ./..."]
@@ -54,5 +67,5 @@ description = "Format the source"
 run = "gofmt -w ."
 
 [tasks.check]
-description = "Everything CI runs"
+description = "Run lint and test together"
 depends = ["lint", "test"]

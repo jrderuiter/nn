@@ -22,10 +22,21 @@ the reasons behind the design.
 | `internal/cli` | The cobra commands, and the pipeline that builds a run |
 | `internal/config` | Loading and merging `nn.toml`, plus the environment layer |
 | `internal/tool` | The provider contract and the registry. A provider is the code behind one tool. |
-| `internal/tool/<name>` | One tool each: `runtime`, `git`, `github`, `kubernetes` |
+| `internal/tool/<name>` | One tool each: `runtime`, `git`, `github`, `azuredevops`, `kubernetes` |
 | `internal/nono` | The profile types, the merger, and the call to `nono` |
 | `internal/workspace` | The generated artifact directory under `.nono/nn` |
 | `internal/secrets` | Resolving a secret with `fnox get` |
+
+## Worktrees
+
+Do all work in a git worktree. Do not change files in the main checkout,
+because it can hold uncommitted work of the user.
+
+1. For a new branch, run
+   `git worktree add .worktrees/<branch> -b <branch> --no-track origin/main`.
+2. For an existing branch, run `git worktree add .worktrees/<branch> <branch>`.
+3. Run every command for the branch from inside its worktree.
+4. When you finish, run `git worktree remove .worktrees/<branch>`.
 
 ## Tasks
 
@@ -37,6 +48,7 @@ Tasks live in `mise.toml`. Run them with `mise run <task>`.
 | `test` | Run the unit and golden tests |
 | `golden` | Rewrite the golden profiles after a change to a generator |
 | `integration` | Run the tests that need the real `nono` binary |
+| `packs` | Install the nono packs that the golden profiles extend |
 | `lint` | Report unformatted files and vet problems |
 | `fmt` | Format the source |
 | `check` | Run `lint` and `test` together |
@@ -61,7 +73,10 @@ through verbatim.
 
 The integration tests run `nono profile validate --strict` over every golden
 profile. They need `nono` on the PATH, so they carry the `integration` build
-tag and stay out of the default run.
+tag and stay out of the default run. Some golden profiles extend an agent pack,
+so run `mise run packs` before the first run. CI runs them against the nono
+version that `mise.toml` pins, and a weekly job tries the latest nono. In CI a
+missing `nono` fails the tests instead of skipping them.
 
 ## Adding a tool
 
@@ -69,16 +84,22 @@ A tool is one thing an agent can be given. Follow the shape of
 `internal/tool/git/git.go`.
 
 1. Create `internal/tool/<name>/<name>.go`.
-2. Declare a `Config` struct. Give every field a `toml` tag and a `help` tag.
-   The environment keys and `nn example` both come from those tags.
+2. Declare a `Config` struct. Give every field a `toml` tag and a doc comment.
+   The environment keys come from the `toml` tags. Do not use the key
+   `enabled`: the config layer reserves it to switch a table off, and removes
+   it before the provider decodes the table. Apply a string default when the
+   decoded value is empty, so that a later layer can give the default back.
 3. Call `tool.Register` from `init`, with a factory and a prototype function.
 4. Implement `Name`, `Preflight` and `Build`.
 5. Add the blank import to the provider block in `internal/cli/pipeline.go`.
-6. Add the name to the `order` list in `internal/tool/tool.go`, so the merged
-   profile stays byte stable.
-7. Add a golden case under `internal/cli/testdata/cases`, then run
+6. If the tool must run before others, add its name to the `order` list in
+   `internal/tool/tool.go`. A tool that is not in the list runs after the
+   listed ones, in name order, so the merged profile stays byte stable.
+7. Add the tool and every setting to `nn example` in
+   `internal/cli/example.go`. A test fails when one is missing.
+8. Add a golden case under `internal/cli/testdata/cases`, then run
    `mise run golden`.
-8. Document the tool in `README.md`.
+9. Document the tool in `README.md`.
 
 `Build` returns a fragment and its artifacts. It never invokes nono, never
 writes a file, and never resolves a secret. The pipeline does all three.
@@ -106,8 +127,21 @@ Package comments say what the package is for. A comment on difficult code says
 why the code is the way it is, not what it does. The existing comments are the
 model. Match their density.
 
+Follow these rules for every comment that you add:
+
+1. Keep it short. One or two sentences are usually enough.
+2. Write for the reader of the code, not about your change. Do not describe
+   the fix or the history.
+3. Keep only details that the code does not show. If a reader can see it in
+   the code, delete the comment.
+4. Write in plain English, as in the documentation.
+
+Put guidance for coding agents in `AGENTS.md` only, not in code comments or
+`README.md`. Add it only when an agent cannot do the work correctly without it.
+
 Error messages start with a lower case letter and name what failed, for example
 `tool %q: %w`.
 
 Documentation follows the plain English style of `README.md`: short sentences,
-active voice, simple tenses, and no contractions.
+active voice, simple tenses, and no contractions. Apply the `simple-english`
+skill to the documentation and to the comments that you write.

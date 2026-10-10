@@ -2,3 +2,12 @@
 /bin/
 /dist/
 /nn.local.toml
+/.worktrees/
+
+fnox.toml
+fnox.local.toml
+
+slides
+demo
+
+.DS_Store

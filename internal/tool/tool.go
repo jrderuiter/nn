@@ -17,16 +17,29 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"github.com/jrderuiter/nn/internal/nono"
-	"github.com/jrderuiter/nn/internal/secrets"
 )
+
+// SecretChecker makes sure that a secret key resolves. A provider needs no
+// more than that, because it only names secrets and never reads one: the
+// pipeline resolves them at launch. *secrets.Resolver is the real one.
+type SecretChecker interface {
+	Check(ctx context.Context, key string) error
+}
 
 // Env is everything a provider may read about the run.
 type Env struct {
 	Workdir     string // absolute working directory
 	ArtifactDir string // absolute path of $WORKDIR/.nono/nn
 	HomeDir     string
-	Secrets     *secrets.Resolver
+	Secrets     SecretChecker
 	Lookup      func(string) (string, bool) // host environment, for preflight only
+	// GitRemotes lists the remote URLs of the repository in Workdir. It is a
+	// function, like Lookup, so a test can hand a provider a fixed set without
+	// a real repository. It returns nothing when Workdir is not a repository.
+	GitRemotes func(ctx context.Context) ([]string, error)
+	// GitCommonDir returns the absolute shared git directory when Workdir is a
+	// linked worktree, and an empty string otherwise.
+	GitCommonDir func(ctx context.Context) (string, error)
 }
 
 // Artifact is a file that the generated profile refers to.
@@ -48,6 +61,10 @@ type Secret struct {
 	EnvVar string
 	// Key is the fnox key that holds the value.
 	Key string
+	// Format wraps the value, with {} standing for it. Empty means the value
+	// as it is. A basic_auth route needs it: nono base64-encodes the stored
+	// value as it is, so it must already be a user:password pair.
+	Format string
 }
 
 // Result is what a provider contributes to the run.
@@ -64,6 +81,19 @@ type Result struct {
 	// They never reach the sandbox: the profile lists no such name in
 	// allow_vars, and the proxy gives the child a phantom token instead.
 	Secrets []Secret
+	// GitConfig are git configuration entries for the sandbox. They reach git
+	// through GIT_CONFIG_COUNT and the numbered GIT_CONFIG_KEY_n and
+	// GIT_CONFIG_VALUE_n variables. That form is one numbered list per
+	// process, so two tools that each wrote it would conflict. The pipeline
+	// numbers the entries of every tool in one list instead.
+	GitConfig []GitConfig
+}
+
+// GitConfig is one git configuration entry, for example an insteadOf rewrite.
+// A key may repeat, as git allows for multi-valued keys.
+type GitConfig struct {
+	Key   string
+	Value string
 }
 
 // Provider is one tool.
@@ -82,9 +112,9 @@ type Factory func(md toml.MetaData, prim toml.Primitive) (Provider, error)
 
 type entry struct {
 	factory Factory
-	// proto returns a pointer to a zero value of the capability's own
+	// proto returns a pointer to a zero value of the tool's own
 	// configuration struct, with its defaults applied. The toml tags on that
-	// struct are what `nn capability` turns into flags.
+	// struct are where the environment keys come from.
 	proto func() any
 }
 
@@ -96,7 +126,7 @@ var registry = map[string]entry{}
 // after these, in name order.
 var order = []string{
 	"mise", "go", "node", "bun", "python", "rust", "java", "nix",
-	"git", "github", "kubernetes",
+	"git", "github", "azure_devops", "kubernetes",
 }
 
 // Register adds a tool. proto returns a pointer to the tool's own
@@ -142,6 +172,12 @@ func EnvKeys() []ConfigKey {
 			ft := f.Type
 			for ft.Kind() == reflect.Pointer {
 				ft = ft.Elem()
+			}
+			// A table of tables, such as the named clusters of kubernetes,
+			// has no flat spelling as one variable, so it comes from
+			// nn.toml alone.
+			if ft.Kind() == reflect.Map || ft.Kind() == reflect.Struct {
+				continue
 			}
 			out = append(out, ConfigKey{
 				Path: "tools." + name + "." + key,

@@ -2,6 +2,7 @@ package kubernetes
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -149,11 +150,11 @@ func mustAbs(t *testing.T, p string) string {
 }
 
 func TestProxyRouteUsesAnAbsoluteCAPath(t *testing.T) {
-	p := &provider{
-		cfg: Config{Context: "prod-eks", ServiceAccount: "ro", ServiceAccountNamespace: "apps",
+	p := single(&target{
+		cfg: Cluster{Auth: authServiceAccount, Context: "prod-eks", ServiceAccount: "ro", ServiceAccountNamespace: "apps",
 			TokenTTL: "1h", Kubectl: "/usr/local/bin/kubectl", Kubeconfig: mustAbs(t, fixture)},
 		ttl: time.Hour,
-	}
+	})
 	env := &tool.Env{
 		Workdir: "/w", ArtifactDir: "/w/.nono/nn", HomeDir: "/h",
 		Lookup: func(string) (string, bool) { return "", false },
@@ -204,8 +205,8 @@ func TestResolveKubectlTakesAnAbsolutePathAsGiven(t *testing.T) {
 
 // The command nono runs must name a binary by absolute path.
 func TestTokenCommandUsesTheResolvedBinary(t *testing.T) {
-	p := &provider{
-		cfg: Config{Context: "prod-eks", ServiceAccount: "ro", ServiceAccountNamespace: "apps",
+	p := &target{
+		cfg: Cluster{Context: "prod-eks", ServiceAccount: "ro", ServiceAccountNamespace: "apps",
 			TokenTTL: "1h", Kubectl: "kubectl"},
 		kubectl: "/opt/homebrew/bin/kubectl",
 		ttl:     time.Hour,
@@ -224,7 +225,7 @@ func TestServiceAccountNamespaceDefaults(t *testing.T) {
 	var cfg struct {
 		Tools map[string]toml.Primitive `toml:"tools"`
 	}
-	md, err := toml.Decode("[tools.kubernetes]\nservice_account = \"ro\"\n", &cfg)
+	md, err := toml.Decode("[tools.kubernetes]\nauth = \"service-account\"\nservice_account = \"ro\"\n", &cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,15 +233,28 @@ func TestServiceAccountNamespaceDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := p.(*provider).cfg.ServiceAccountNamespace
+	got := p.(*provider).targets[0].cfg.ServiceAccountNamespace
 	if got != "default" {
 		t.Fatalf("got %q, want default", got)
 	}
 }
 
+// A later layer cannot delete a key, so an empty value must mean the default
+// rather than fail on an empty duration or binary name.
+func TestEmptyValuesMeanTheDefaults(t *testing.T) {
+	p, err := newFromTOML(t, "auth = \"host\"\ntoken_ttl = \"\"\nkubectl = \"\"\nservice_account_namespace = \"\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := p.(*provider).targets[0].cfg
+	if c.TokenTTL != "1h" || c.Kubectl != "kubectl" || c.ServiceAccountNamespace != "default" {
+		t.Fatalf("got %+v", c)
+	}
+}
+
 func TestServiceAccountNamespaceIsUsedForTheToken(t *testing.T) {
-	p := &provider{
-		cfg: Config{ServiceAccount: "ro", ServiceAccountNamespace: "agent-access",
+	p := &target{
+		cfg: Cluster{ServiceAccount: "ro", ServiceAccountNamespace: "agent-access",
 			TokenTTL: "1h", Kubectl: "kubectl"},
 		kubectl: "/opt/homebrew/bin/kubectl",
 		ttl:     time.Hour,
@@ -248,5 +262,294 @@ func TestServiceAccountNamespaceIsUsedForTheToken(t *testing.T) {
 	got := strings.Join(p.tokenCommand(""), " ")
 	if !strings.Contains(got, "-n agent-access") {
 		t.Fatalf("the token must be minted in the account's namespace, got %s", got)
+	}
+}
+
+// single wraps one target the way New builds the single cluster form.
+func single(t *target) *provider {
+	t.route, t.tokenEnv, t.caFile = routeName, tokenEnv, "ca.pem"
+	return &provider{targets: []*target{t}}
+}
+
+func newFromTOML(t *testing.T, body string) (tool.Provider, error) {
+	t.Helper()
+	var cfg struct {
+		Tools map[string]toml.Primitive `toml:"tools"`
+	}
+	md, err := toml.Decode("[tools.kubernetes]\n"+body, &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return New(md, cfg.Tools["kubernetes"])
+}
+
+// The host form puts the context credentials in the sandbox, so a missing
+// service account must never select it silently.
+func TestAuthServiceAccountNeedsAnAccount(t *testing.T) {
+	_, err := newFromTOML(t, "auth = \"service-account\"\ncontext = \"k3d-dev\"\n")
+	if err == nil {
+		t.Fatal("a missing service_account must be an error")
+	}
+	if !strings.Contains(err.Error(), `auth = "host"`) {
+		t.Fatalf("the error should name the host form, got: %v", err)
+	}
+}
+
+// auth has no default, so neither form is ever chosen by a missing key.
+func TestAuthIsRequired(t *testing.T) {
+	_, err := newFromTOML(t, "service_account = \"ro\"\n")
+	if err == nil {
+		t.Fatal("a missing auth must be an error, even with a service account")
+	}
+	if !strings.Contains(err.Error(), "auth is required") {
+		t.Fatalf("got: %v", err)
+	}
+}
+
+func TestAuthHostNeedsNoAccount(t *testing.T) {
+	p, err := newFromTOML(t, "auth = \"host\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.(*provider).targets[0].cfg.Auth != authHost {
+		t.Fatalf("got auth %q", p.(*provider).targets[0].cfg.Auth)
+	}
+}
+
+func TestAuthHostRejectsAServiceAccount(t *testing.T) {
+	if _, err := newFromTOML(t, "auth = \"host\"\nservice_account = \"ro\"\n"); err == nil {
+		t.Fatal("auth = host together with service_account must be an error")
+	}
+}
+
+func TestAuthRejectsAnUnknownValue(t *testing.T) {
+	if _, err := newFromTOML(t, "auth = \"token\"\nservice_account = \"ro\"\n"); err == nil {
+		t.Fatal("an unknown auth value must be an error")
+	}
+}
+
+// kubectl reads the generated kubeconfig, and it expands no variable, so the
+// $WORKDIR spelling of the profile turns into a path that does not exist.
+// kubectl resolves a relative path against the directory of the kubeconfig,
+// which is where ca.pem lands.
+func TestDirectKubeconfigNamesTheCARelativeToItself(t *testing.T) {
+	host := filepath.Join(t.TempDir(), "config")
+	body := `apiVersion: v1
+kind: Config
+current-context: k3d
+clusters:
+  - name: k3d
+    cluster:
+      server: https://127.0.0.1:6443
+      certificate-authority-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCmZha2UKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+contexts:
+  - name: k3d
+    context:
+      cluster: k3d
+      user: k3d
+users:
+  - name: k3d
+    user:
+      token: local-static-token
+`
+	if err := os.WriteFile(host, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := single(&target{cfg: Cluster{Auth: authHost, Kubeconfig: host}})
+	r, err := p.Build(context.Background(), &tool.Env{
+		Workdir: "/w", ArtifactDir: "/w/.nono/nn", HomeDir: "/h",
+		Lookup: func(string) (string, bool) { return "", false },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg, ca []byte
+	for _, a := range r.Artifacts {
+		switch a.RelPath {
+		case "kube/config":
+			cfg = a.Content
+		case "kube/ca.pem":
+			ca = a.Content
+		}
+	}
+	if len(ca) == 0 {
+		t.Fatal("the CA must be written next to the kubeconfig")
+	}
+	if !strings.Contains(string(cfg), "certificate-authority: ca.pem") || strings.Contains(string(cfg), "$") {
+		t.Fatalf("the kubeconfig must name ca.pem relative to itself:\n%s", cfg)
+	}
+	// The fixture server is on this machine, so its port is opened.
+	if n := r.Fragment.Network; len(n.OpenPort) != 1 || n.OpenPort[0] != 6443 || len(n.AllowDomain) != 0 {
+		t.Fatalf("a local cluster needs its port opened, got %+v", n)
+	}
+}
+
+// Go never sends a loopback address through a proxy, so a local cluster needs
+// its port opened rather than its host allowed.
+func TestLoopbackPort(t *testing.T) {
+	for in, want := range map[string]int{
+		"127.0.0.1:6550": 6550,
+		"localhost:6443": 6443,
+		"[::1]:6443":     6443,
+		"0.0.0.0:6550":   6550,
+		"127.0.0.1":      443,
+	} {
+		if got, ok := loopbackPort(in); !ok || got != want {
+			t.Errorf("%s: got %d, %v, want %d", in, got, ok, want)
+		}
+	}
+	for _, in := range []string{"ABCDEF.gr7.eu-west-1.eks.amazonaws.com", "10.0.0.5:6443", "k8s.example.com:6443"} {
+		if _, ok := loopbackPort(in); ok {
+			t.Errorf("%s is not on this machine", in)
+		}
+	}
+}
+
+// Go sends 0.0.0.0 through the proxy, because the address is not loopback.
+func TestDialLoopbackRewritesTheUnspecifiedAddress(t *testing.T) {
+	for in, want := range map[string][2]string{
+		"https://0.0.0.0:6550":    {"https://127.0.0.1:6550", "0.0.0.0"},
+		"https://[::]:6443":       {"https://[::1]:6443", "::"},
+		"https://0.0.0.0":         {"https://127.0.0.1", "0.0.0.0"},
+		"https://127.0.0.1:6550":  {"https://127.0.0.1:6550", ""},
+		"https://k8s.example.com": {"https://k8s.example.com", ""},
+	} {
+		got := dialLoopback(cluster{Server: in})
+		if got.Server != want[0] || got.TLSServerName != want[1] {
+			t.Errorf("%s: got %q, %q, want %q, %q", in, got.Server, got.TLSServerName, want[0], want[1])
+		}
+	}
+	kept := dialLoopback(cluster{Server: "https://0.0.0.0:6550", TLSServerName: "k3d"})
+	if kept.TLSServerName != "k3d" {
+		t.Errorf("an explicit tls-server-name must stay, got %q", kept.TLSServerName)
+	}
+}
+
+func TestClustersNeedCurrentWhenThereAreSeveral(t *testing.T) {
+	_, err := newFromTOML(t, "[tools.kubernetes.clusters.a]\nauth = \"host\"\n"+
+		"[tools.kubernetes.clusters.b]\nauth = \"host\"\n")
+	if err == nil || !strings.Contains(err.Error(), "current is required") {
+		t.Fatalf("got: %v", err)
+	}
+}
+
+func TestClustersRejectAnUnknownCurrent(t *testing.T) {
+	_, err := newFromTOML(t, "current = \"c\"\n[tools.kubernetes.clusters.a]\nauth = \"host\"\n")
+	if err == nil || !strings.Contains(err.Error(), `current "c" is not a cluster`) {
+		t.Fatalf("got: %v", err)
+	}
+}
+
+func TestOneClusterIsCurrentByDefault(t *testing.T) {
+	p, err := newFromTOML(t, "[tools.kubernetes.clusters.a]\nauth = \"host\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.(*provider).current; got != "a" {
+		t.Fatalf("got current %q", got)
+	}
+}
+
+// A key that picks a cluster would silently apply to every cluster at the top.
+func TestClustersRejectTopLevelAuth(t *testing.T) {
+	_, err := newFromTOML(t, "auth = \"host\"\n[tools.kubernetes.clusters.a]\nauth = \"host\"\n")
+	if err == nil || !strings.Contains(err.Error(), "auth belongs in each") {
+		t.Fatalf("got: %v", err)
+	}
+}
+
+func TestClusterErrorsNameTheCluster(t *testing.T) {
+	_, err := newFromTOML(t, "[tools.kubernetes.clusters.a]\nauth = \"service-account\"\n")
+	if err == nil || !strings.Contains(err.Error(), `cluster "a": auth "service-account" needs service_account`) {
+		t.Fatalf("got: %v", err)
+	}
+}
+
+func TestClustersInheritTheSharedSettings(t *testing.T) {
+	p, err := newFromTOML(t, "kubectl = \"/k\"\nservice_account_namespace = \"apps\"\ntoken_ttl = \"2h\"\n"+
+		"[tools.kubernetes.clusters.a]\nauth = \"service-account\"\nservice_account = \"ro\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := p.(*provider).targets[0].cfg
+	if c.Kubectl != "/k" || c.ServiceAccountNamespace != "apps" || c.TokenTTL != "2h" {
+		t.Fatalf("got %+v", c)
+	}
+}
+
+func TestClusterNamesMustStayDistinctAsRoutes(t *testing.T) {
+	_, err := newFromTOML(t, "current = \"a-b\"\n[tools.kubernetes.clusters.a-b]\nauth = \"host\"\n"+
+		"[tools.kubernetes.clusters.a_b]\nauth = \"host\"\n")
+	if err == nil || !strings.Contains(err.Error(), "would share the route") {
+		t.Fatalf("got: %v", err)
+	}
+}
+
+func TestClusterNamesAreLimited(t *testing.T) {
+	_, err := newFromTOML(t, "[tools.kubernetes.clusters.\"a.b\"]\nauth = \"host\"\n")
+	if err == nil || !strings.Contains(err.Error(), "a name holds only") {
+		t.Fatalf("got: %v", err)
+	}
+}
+
+func testEnv() *tool.Env {
+	return &tool.Env{
+		Workdir: "/w", ArtifactDir: "/w/.nono/nn", HomeDir: "/h",
+		Lookup: func(string) (string, bool) { return "", false },
+	}
+}
+
+// nono picks a route by host, so a token would reach the wrong cluster.
+func TestClustersRejectASharedAPIServer(t *testing.T) {
+	body := fmt.Sprintf("kubeconfig = %q\nkubectl = \"/usr/local/bin/kubectl\"\ncurrent = \"a\"\n"+
+		"[tools.kubernetes.clusters.a]\nauth = \"service-account\"\ncontext = \"prod-eks\"\nservice_account = \"ro\"\n"+
+		"[tools.kubernetes.clusters.b]\nauth = \"service-account\"\ncontext = \"prod-eks\"\nservice_account = \"admin\"\n",
+		mustAbs(t, fixture))
+	p, err := newFromTOML(t, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Build(context.Background(), testEnv()); err == nil || !strings.Contains(err.Error(), "both use the API server") {
+		t.Fatalf("got: %v", err)
+	}
+}
+
+func TestClustersShareOneKubeconfig(t *testing.T) {
+	body := fmt.Sprintf("kubeconfig = %q\nkubectl = \"/usr/local/bin/kubectl\"\ncurrent = \"local\"\n"+
+		"[tools.kubernetes.clusters.prod]\nauth = \"service-account\"\ncontext = \"prod-eks\"\nservice_account = \"ro\"\n"+
+		"[tools.kubernetes.clusters.local]\nauth = \"host\"\ncontext = \"local\"\n",
+		mustAbs(t, fixture))
+	p, err := newFromTOML(t, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := p.Build(context.Background(), testEnv())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg []byte
+	paths := map[string]bool{}
+	for _, a := range r.Artifacts {
+		paths[a.RelPath] = true
+		if a.RelPath == "kube/config" {
+			cfg = a.Content
+		}
+	}
+	if !paths["kube/ca-prod.pem"] {
+		t.Fatalf("each cluster gets its own CA file, got %v", paths)
+	}
+	var kc kubeconfig
+	if err := yaml.Unmarshal(cfg, &kc); err != nil {
+		t.Fatal(err)
+	}
+	if kc.CurrentContext != "local" || len(kc.Contexts) != 2 || kc.Contexts[0].Name != "local" || kc.Contexts[1].Name != "prod" {
+		t.Fatalf("the kubeconfig must hold both contexts and select current:\n%s", cfg)
+	}
+	if !strings.Contains(string(cfg), "K8S_TOKEN_PROD") || !strings.Contains(string(cfg), "local-static-token") {
+		t.Fatalf("each user must keep its own credential:\n%s", cfg)
+	}
+	n := r.Fragment.Network
+	if len(n.Credentials) != 1 || n.Credentials[0] != "k8s_prod" || len(n.OpenPort) != 1 || n.OpenPort[0] != 6443 {
+		t.Fatalf("got %+v", n)
 	}
 }

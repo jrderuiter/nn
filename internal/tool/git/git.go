@@ -4,6 +4,9 @@
 // It does not pass the host ssh agent socket through. Pushing over ssh would
 // need that socket, and the github tool rewrites github.com remotes to HTTPS
 // instead, where the proxy injects a token that the sandbox never sees.
+//
+// In a linked worktree it also grants the shared git directory of the main
+// repository, because git keeps the objects and refs there.
 package git
 
 import (
@@ -19,12 +22,16 @@ import (
 // Config is the [tools.git] table.
 type Config struct {
 	// Name and Email set the committer identity inside the sandbox.
-	Name  string `toml:"name" help:"committer name inside the sandbox"`
-	Email string `toml:"email" help:"committer email inside the sandbox"`
+	Name  string `toml:"name"`
+	Email string `toml:"email"`
 	// Hosts are extra git hosts to allow, for example "gitlab.com".
-	Hosts []string `toml:"hosts" help:"extra git hosts to allow"`
-	// Config grants read access to the host git configuration.
-	Config *bool `toml:"config" help:"grant read access to the host git configuration"`
+	Hosts []string `toml:"hosts"`
+	// Config grants read access to the host git configuration: the user files
+	// and, on Linux, the system file /etc/gitconfig.
+	Config *bool `toml:"config"`
+	// Worktree grants read and write access to the shared git directory when
+	// the working directory is a linked worktree.
+	Worktree *bool `toml:"worktree"`
 }
 
 type provider struct{ cfg Config }
@@ -47,6 +54,10 @@ func New(md toml.MetaData, prim toml.Primitive) (tool.Provider, error) {
 		v := true
 		cfg.Config = &v
 	}
+	if cfg.Worktree == nil {
+		v := true
+		cfg.Worktree = &v
+	}
 	if (cfg.Name == "") != (cfg.Email == "") {
 		return nil, fmt.Errorf("name and email must be set together")
 	}
@@ -65,6 +76,11 @@ func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error)
 
 	if *p.cfg.Config {
 		f.Groups = &nono.Groups{Include: []nono.CondName{nono.G("git_config")}}
+		// The git_config group covers only the files under $HOME. git treats an
+		// unreadable system file as fatal, not as absent, so without this grant
+		// every git command fails. The path is the same on every Linux host; on
+		// macOS it depends on how git was installed, so it is left out there.
+		f.Filesystem = &nono.Filesystem{ReadFile: []nono.CondPath{nono.PWhen("/etc/gitconfig", "linux")}}
 	}
 
 	if p.cfg.Name != "" {
@@ -83,5 +99,17 @@ func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error)
 		f.Network.AllowDomain = append(f.Network.AllowDomain, nono.Domain{Domain: h})
 	}
 
-	return &tool.Result{Fragment: f}, nil
+	r := &tool.Result{Fragment: f}
+	if *p.cfg.Worktree && e.GitCommonDir != nil {
+		dir, err := e.GitCommonDir(ctx)
+		if err != nil {
+			return nil, err
+		}
+		// A flag, not a profile path: the directory is absolute and differs
+		// per machine, and the profile must stay portable.
+		if dir != "" {
+			r.NonoArgs = []string{"--allow", dir}
+		}
+	}
+	return r, nil
 }

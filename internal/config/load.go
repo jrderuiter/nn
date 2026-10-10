@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -24,7 +25,7 @@ const LocalFileName = "nn.local.toml"
 // the machine local layer beside it, then the environment.
 //
 // The layers are merged as plain maps before anything is decoded into the
-// configuration struct. Decoding each file in turn would not work: a capability
+// configuration struct. Decoding each file in turn would not work: a tool
 // table is decoded lazily by its provider, and a second decode would replace
 // the first table rather than merge into it.
 // Options selects the layers that Load reads.
@@ -51,10 +52,16 @@ func Load(o Options) (*Config, error) {
 		mergeMaps(merged, m)
 	}
 
-	applyEnv(merged, o.Keys)
+	if err := applyEnv(merged, o.Keys); err != nil {
+		return nil, err
+	}
+
+	if err := pruneDisabled(merged); err != nil {
+		return nil, fmt.Errorf("%s: %w", describe(files), err)
+	}
 
 	if len(merged) == 0 {
-		// No configuration at all is a valid state: `nn -- claude` with
+		// No configuration at all is a valid state: `nn run -- claude` with
 		// defaults only.
 		return &Config{sources: files}, nil
 	}
@@ -71,9 +78,25 @@ func Load(o Options) (*Config, error) {
 	if err := rejectUnknown(describe(files), md); err != nil {
 		return nil, err
 	}
+	if err := checkAgentNames(describe(files), cfg.Agents); err != nil {
+		return nil, err
+	}
 	cfg.md = md
 	cfg.sources = files
 	return cfg, nil
+}
+
+// agentNamePattern keeps an agent name safe to use in a file name, because
+// each agent gets its own profile file.
+var agentNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+func checkAgentNames(source string, agents map[string]Agent) error {
+	for name := range agents {
+		if !agentNamePattern.MatchString(name) {
+			return fmt.Errorf("%s: [agents.%s]: an agent name must be lower case letters, digits, - and _", source, name)
+		}
+	}
+	return nil
 }
 
 func configFiles(dir, explicit string) ([]string, error) {
@@ -108,8 +131,51 @@ func describe(files []string) string {
 	return strings.Join(files, ", ")
 }
 
+// EnabledKey switches a table under [tools] off. A merge only adds and
+// replaces keys, and TOML has no null, so no layer can delete a table that a
+// layer below it wrote. A switch merges like any other key, which lets a later
+// file drop a tool, or one named entry of a tool, that an earlier file
+// declares.
+const EnabledKey = "enabled"
+
+// pruneDisabled removes every table under [tools] whose enabled key is false.
+// It runs after every layer has merged, so the last layer decides. It also
+// drops the key from the tables that stay, so a provider never sees it.
+func pruneDisabled(merged map[string]any) error {
+	tools, ok := merged["tools"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	return prune("tools", tools)
+}
+
+func prune(path string, table map[string]any) error {
+	for k, v := range table {
+		sub, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		p := path + "." + k
+		if raw, set := sub[EnabledKey]; set {
+			on, ok := raw.(bool)
+			if !ok {
+				return fmt.Errorf("%s.%s must be true or false, got %v", p, EnabledKey, raw)
+			}
+			delete(sub, EnabledKey)
+			if !on {
+				delete(table, k)
+				continue
+			}
+		}
+		if err := prune(p, sub); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // mergeMaps folds src into dst, descending into nested tables so a later layer
-// adds to a capability rather than replacing it.
+// adds to a tool rather than replacing it.
 func mergeMaps(dst, src map[string]any) {
 	for k, v := range src {
 		sub, isMap := v.(map[string]any)
@@ -162,13 +228,17 @@ func userConfigPath() string {
 }
 
 // rejectUnknown fails on a key that nn does not understand. Keys under
-// [capabilities] are exempt, because each provider decodes its own sub-table
-// and validates it there.
+// [tools] are exempt, because each provider decodes its own sub-table
+// and validates it there. So are the raw profile blocks, which are checked
+// against the profile types when they are decoded.
 func rejectUnknown(source string, md toml.MetaData) error {
 	var bad []string
 	for _, k := range md.Undecoded() {
 		s := k.String()
 		if strings.HasPrefix(s, "tools.") || strings.HasPrefix(s, "nono.profile.") {
+			continue
+		}
+		if len(k) > 3 && k[0] == "agents" && k[2] == "profile" {
 			continue
 		}
 		bad = append(bad, s)

@@ -2,12 +2,15 @@ package runtime
 
 import (
 	"context"
+	"slices"
 	"testing"
+
+	"github.com/BurntSushi/toml"
 
 	"github.com/jrderuiter/nn/internal/tool"
 )
 
-// Each tool capability must name exactly one nono group, so the mapping back to
+// Each runtime tool must name exactly one nono group, so the mapping back to
 // nono stays one to one and visible.
 func TestEachToolWrapsOneGroup(t *testing.T) {
 	for name, sp := range specs {
@@ -50,6 +53,18 @@ func TestToolWithoutGapsIsJustTheGroup(t *testing.T) {
 	}
 }
 
+// A platform path is granted everywhere in the profile, but created only on
+// its own platform.
+func TestEnsureDirsSkipsOtherPlatforms(t *testing.T) {
+	allow := specs["mise"].allow
+	if got := ensureDirs(allow, "darwin"); len(got) != 3 {
+		t.Errorf("macOS must create all three mise paths, got %v", got)
+	}
+	if got := ensureDirs(allow, "linux"); slices.Contains(got, "$HOME/Library/Caches/mise") || len(got) != 2 {
+		t.Errorf("Linux must not create the macOS cache, got %v", got)
+	}
+}
+
 func TestEveryToolIsRegistered(t *testing.T) {
 	known := map[string]bool{}
 	for _, n := range tool.Known() {
@@ -57,7 +72,43 @@ func TestEveryToolIsRegistered(t *testing.T) {
 	}
 	for _, n := range Names() {
 		if !known[n] {
-			t.Errorf("tool %q is not registered as a capability", n)
+			t.Errorf("tool %q is not registered as a tool", n)
 		}
+	}
+}
+
+func buildMise(t *testing.T, body string) *tool.Result {
+	t.Helper()
+	var cfg struct {
+		Tools map[string]toml.Primitive `toml:"tools"`
+	}
+	md, err := toml.Decode("[tools.mise]\n"+body, &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := factoryFor("mise")(md, cfg.Tools["mise"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := p.Build(context.Background(), &tool.Env{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// The trusted path is the profile spelling of the working directory, so the
+// profile stays portable.
+func TestMiseTrustsTheWorkdir(t *testing.T) {
+	r := buildMise(t, "trust_workdir = true\n")
+	if got := r.Fragment.Environment.SetVars["MISE_TRUSTED_CONFIG_PATHS"]; got != "$WORKDIR" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestMiseTrustsNothingByDefault(t *testing.T) {
+	r := buildMise(t, "")
+	if r.Fragment.Environment != nil {
+		t.Fatalf("got %+v", r.Fragment.Environment)
 	}
 }

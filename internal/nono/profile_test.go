@@ -70,3 +70,17 @@ func TestEmptyProfileHasNoKeys(t *testing.T) {
 		t.Fatalf("got %s, want {}", got)
 	}
 }
+
+func TestLinuxMarshal(t *testing.T) {
+	got, err := json.Marshal(&Profile{Linux: &Linux{AfUnixMediation: "pathname"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"linux":{"af_unix_mediation":"pathname"}}`; string(got) != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+	empty, _ := json.Marshal(&Linux{})
+	if string(empty) != "{}" {
+		t.Fatalf("an unset mode must be left out, got %s", empty)
+	}
+}

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 )
 
 // DirName is the artifact directory relative to the working directory. The
@@ -30,8 +32,19 @@ func New(workdir string) (*Workspace, error) {
 // Path resolves a path relative to the artifact directory.
 func (w *Workspace) Path(rel string) string { return filepath.Join(w.Dir, rel) }
 
+// ProfileFile is the name of the profile for an agent, relative to the
+// artifact directory. Each agent has its own file, so two agents can run in
+// the same project at the same time. A command that is no agent uses
+// profile.json.
+func ProfileFile(agent string) string {
+	if agent == "" {
+		return "profile.json"
+	}
+	return "profile-" + agent + ".json"
+}
+
 // ProfilePath is the file that nn passes to `nono run --profile`.
-func (w *Workspace) ProfilePath() string { return w.Path("profile.json") }
+func (w *Workspace) ProfilePath(agent string) string { return w.Path(ProfileFile(agent)) }
 
 // Write puts content at a path relative to the artifact directory, creating
 // parents and replacing the file atomically so a reader never sees a partial
@@ -76,4 +89,40 @@ func (w *Workspace) EnsureGitignore() error {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
+}
+
+// Prune removes each top level entry of the artifact directory that keep does
+// not name, and returns the names it removed, sorted.
+//
+// A tool that is turned off leaves its files behind otherwise, and those can
+// be a kubeconfig or a CA. The .gitignore and every profile file stay whatever
+// keep says, because each agent writes its own profile and another agent can
+// be running with it.
+func (w *Workspace) Prune(keep map[string]bool) ([]string, error) {
+	entries, err := os.ReadDir(w.Dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var removed []string
+	for _, e := range entries {
+		name := e.Name()
+		if keep[name] || name == ".gitignore" || isProfileFile(name) {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(w.Dir, name)); err != nil {
+			return removed, err
+		}
+		removed = append(removed, name)
+	}
+	sort.Strings(removed)
+	return removed, nil
+}
+
+// isProfileFile says whether a name is one that ProfileFile gives.
+func isProfileFile(name string) bool {
+	return name == "profile.json" ||
+		(strings.HasPrefix(name, "profile-") && strings.HasSuffix(name, ".json"))
 }

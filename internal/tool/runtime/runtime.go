@@ -2,13 +2,15 @@
 //
 // Each one wraps a single nono group and adds what that group leaves out: the
 // writable state and cache directories, and the environment variables the
-// minimal base list would otherwise filter away. The capability is named after
-// the tool rather than the group, because the tool is what you declare and the
-// group is how it is granted.
+// minimal base list would otherwise filter away. Each is named after the
+// program rather than the group, because the program is what you declare and
+// the group is how it is granted.
 package runtime
 
 import (
 	"context"
+	goruntime "runtime"
+	"slices"
 	"sort"
 
 	"github.com/BurntSushi/toml"
@@ -17,9 +19,16 @@ import (
 	"github.com/jrderuiter/nn/internal/tool"
 )
 
-// Config is the table of one tool tool. The tools need no settings yet,
-// so declaring the capability at all is what turns it on.
+// Config is the table of one runtime tool. The tools need no settings yet,
+// so declaring the tool at all is what turns it on.
 type Config struct{}
+
+// MiseConfig is the [tools.mise] table, the one runtime with a setting.
+type MiseConfig struct {
+	// TrustWorkdir makes mise trust the configuration files in the working
+	// directory, inside the sandbox only.
+	TrustWorkdir bool `toml:"trust_workdir"`
+}
 
 // spec describes what a tool needs on top of its nono group.
 type spec struct {
@@ -27,7 +36,7 @@ type spec struct {
 	group string
 	// read and allow are the paths the group misses.
 	read  []string
-	allow []string
+	allow []nono.CondPath
 	// allowVars are the environment variables the tool needs.
 	allowVars []string
 }
@@ -36,17 +45,22 @@ type spec struct {
 // `nono profile groups <name>`, and only the gaps are listed here.
 var specs = map[string]spec{
 	// mise_manager grants read on /etc/mise, ~/.local/bin/mise, ~/.config/mise
-	// and ~/.local/share/mise, and nothing writable.
+	// and ~/.local/share/mise, and nothing writable. On macOS mise keeps its
+	// cache under ~/Library/Caches, not ~/.cache.
 	"mise": {
 		group: "mise_manager",
-		allow: []string{"$HOME/.local/state/mise", "$HOME/.cache/mise"},
+		allow: []nono.CondPath{
+			nono.P("$HOME/.local/state/mise"),
+			nono.P("$HOME/.cache/mise"),
+			nono.PWhen("$HOME/Library/Caches/mise", "macos"),
+		},
 	},
 	// go_runtime grants read on ~/go and /usr/local/go. The module cache and
 	// the build cache sit under those and must be writable, or every build
 	// fails on the first download.
 	"go": {
 		group:     "go_runtime",
-		allow:     []string{"$HOME/go/pkg/mod", "$XDG_CACHE_HOME/go-build"},
+		allow:     []nono.CondPath{nono.P("$HOME/go/pkg/mod"), nono.P("$XDG_CACHE_HOME/go-build")},
 		allowVars: []string{"GO*", "CGO_*"},
 	},
 	"node": {
@@ -75,17 +89,33 @@ var specs = map[string]spec{
 
 func init() {
 	for name := range specs {
-		tool.Register(name, factoryFor(name), func() any { return &Config{} })
+		proto := func() any { return &Config{} }
+		if name == "mise" {
+			proto = func() any { return &MiseConfig{} }
+		}
+		tool.Register(name, factoryFor(name), proto)
 	}
 }
 
 func factoryFor(name string) tool.Factory {
 	return func(md toml.MetaData, prim toml.Primitive) (tool.Provider, error) {
-		var cfg Config
+		p := &provider{name: name, spec: specs[name]}
+		if name != "mise" {
+			var cfg Config
+			return p, md.PrimitiveDecode(prim, &cfg)
+		}
+		var cfg MiseConfig
 		if err := md.PrimitiveDecode(prim, &cfg); err != nil {
 			return nil, err
 		}
-		return &provider{name: name, spec: specs[name]}, nil
+		// mise trusts a configuration file by its path, so a fresh worktree
+		// is untrusted even when its repository is trusted. The value is
+		// expanded by nono, so the profile stays portable. The trust reaches
+		// only the sandbox: the host mise state does not change.
+		if cfg.TrustWorkdir {
+			p.setVars = map[string]string{"MISE_TRUSTED_CONFIG_PATHS": "$WORKDIR"}
+		}
+		return p, nil
 	}
 }
 
@@ -100,8 +130,9 @@ func Names() []string {
 }
 
 type provider struct {
-	name string
-	spec spec
+	name    string
+	spec    spec
+	setVars map[string]string
 }
 
 func (p *provider) Name() string { return p.name }
@@ -117,12 +148,27 @@ func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error)
 		for _, r := range p.spec.read {
 			f.Filesystem.Read = append(f.Filesystem.Read, nono.P(r))
 		}
-		for _, a := range p.spec.allow {
-			f.Filesystem.Allow = append(f.Filesystem.Allow, nono.P(a))
+		f.Filesystem.Allow = append(f.Filesystem.Allow, p.spec.allow...)
+	}
+	if len(p.spec.allowVars) > 0 || len(p.setVars) > 0 {
+		f.Environment = &nono.Environment{AllowVars: p.spec.allowVars, SetVars: p.setVars}
+	}
+	return &tool.Result{Fragment: f, EnsureDirs: ensureDirs(p.spec.allow, goruntime.GOOS)}, nil
+}
+
+// ensureDirs lists the paths to create on this platform. The profile keeps
+// every entry, so it stays the same bytes on every machine, but a macOS path
+// must not appear as an empty directory on Linux.
+func ensureDirs(paths []nono.CondPath, goos string) []string {
+	platform := map[string]string{"darwin": "macos"}[goos]
+	if platform == "" {
+		platform = goos
+	}
+	var out []string
+	for _, c := range paths {
+		if len(c.When) == 0 || slices.Contains(c.When, platform) {
+			out = append(out, c.Path)
 		}
 	}
-	if len(p.spec.allowVars) > 0 {
-		f.Environment = &nono.Environment{AllowVars: p.spec.allowVars}
-	}
-	return &tool.Result{Fragment: f, EnsureDirs: p.spec.allow}, nil
+	return out
 }

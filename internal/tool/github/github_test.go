@@ -2,12 +2,11 @@ package github
 
 import (
 	"context"
-	"strings"
+	"fmt"
 	"testing"
 
 	"github.com/BurntSushi/toml"
 
-	"github.com/jrderuiter/nn/internal/secrets"
 	"github.com/jrderuiter/nn/internal/tool"
 )
 
@@ -26,7 +25,6 @@ func build(t *testing.T, body string) *tool.Result {
 	}
 	r, err := p.Build(context.Background(), &tool.Env{
 		Workdir: "/w", ArtifactDir: "/w/.nono/nn",
-		Secrets: secrets.NewResolver("fnox", "", ""),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +56,7 @@ func TestGitCanBeTurnedOff(t *testing.T) {
 	if _, ok := r.Fragment.Network.CustomCredentials["github_git"]; ok {
 		t.Fatal("git = false should leave the git route out")
 	}
-	if v := r.Fragment.Environment.SetVars["GIT_CONFIG_COUNT"]; v != "" {
+	if len(r.GitConfig) != 0 {
 		t.Fatal("without the git route there is nothing to rewrite to")
 	}
 }
@@ -66,26 +64,20 @@ func TestGitCanBeTurnedOff(t *testing.T) {
 // The proxy can only add a credential to an HTTPS request, so an ssh remote
 // has to be rewritten or the first fetch fails.
 func TestSSHRemotesAreRewrittenToHTTPS(t *testing.T) {
-	vars := build(t, "").Fragment.Environment.SetVars
-	if vars["GIT_CONFIG_COUNT"] != "2" {
-		t.Fatalf("expected two rewrites, got %q", vars["GIT_CONFIG_COUNT"])
-	}
-	var from []string
-	for k, v := range vars {
-		if strings.HasPrefix(k, "GIT_CONFIG_KEY_") && v != "url.https://github.com/.insteadOf" {
-			t.Errorf("%s rewrites to the wrong place: %s", k, v)
-		}
-		if strings.HasPrefix(k, "GIT_CONFIG_VALUE_") {
-			from = append(from, v)
-		}
+	entries := build(t, "").GitConfig
+	if len(entries) != 2 {
+		t.Fatalf("expected two rewrites, got %+v", entries)
 	}
 	// Both spellings of an ssh remote have to be covered.
 	want := map[string]bool{"git@github.com:": false, "ssh://git@github.com/": false}
-	for _, f := range from {
-		if _, ok := want[f]; !ok {
-			t.Errorf("unexpected rewrite source %q", f)
+	for _, e := range entries {
+		if e.Key != "url.https://github.com/.insteadOf" {
+			t.Errorf("%q rewrites to the wrong place: %s", e.Value, e.Key)
 		}
-		want[f] = true
+		if _, ok := want[e.Value]; !ok {
+			t.Errorf("unexpected rewrite source %q", e.Value)
+		}
+		want[e.Value] = true
 	}
 	for f, seen := range want {
 		if !seen {
@@ -95,11 +87,11 @@ func TestSSHRemotesAreRewrittenToHTTPS(t *testing.T) {
 }
 
 func TestRewriteCanBeTurnedOff(t *testing.T) {
-	vars := build(t, "rewrite_ssh = false\n").Fragment.Environment.SetVars
-	if vars["GIT_CONFIG_COUNT"] != "" {
+	r := build(t, "rewrite_ssh = false\n")
+	if len(r.GitConfig) != 0 {
 		t.Fatal("rewrite_ssh = false should write no git configuration")
 	}
-	if vars["GH_CONFIG_DIR"] == "" {
+	if r.Fragment.Environment.SetVars["GH_CONFIG_DIR"] == "" {
 		t.Fatal("turning the rewrite off must not disturb the rest")
 	}
 }
@@ -167,4 +159,50 @@ func TestGitOffAllowsOnlyTheAPIHost(t *testing.T) {
 	if len(doms) != 1 || doms[0].Domain != "api.github.com" {
 		t.Fatalf("got %+v", doms)
 	}
+}
+
+// nono base64-encodes a basic_auth value as it is, so the git route needs a
+// user:token pair, while the header route needs the bare token.
+func TestGitRouteStoresABasicAuthPair(t *testing.T) {
+	for _, s := range build(t, "").Secrets {
+		want := ""
+		if s.EnvVar == "NN_GITHUB_GIT_AUTH" {
+			want = "x-access-token:{}"
+		}
+		if s.Format != want {
+			t.Errorf("%s has format %q, want %q", s.EnvVar, s.Format, want)
+		}
+	}
+}
+
+// Preflight asks for the configured key, so doctor reports a token that does
+// not resolve before an agent sees a 401.
+func TestPreflightChecksTheConfiguredSecret(t *testing.T) {
+	env := &tool.Env{Secrets: fakeSecrets{"GH_TOKEN": true}}
+	for secret, ok := range map[string]bool{"GH_TOKEN": true, "OTHER": false} {
+		var cfg struct {
+			Tools map[string]toml.Primitive `toml:"tools"`
+		}
+		md, err := toml.Decode("[tools.github]\nsecret = \""+secret+"\"\n", &cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := New(md, cfg.Tools["github"])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := p.Preflight(context.Background(), env); (err == nil) != ok {
+			t.Errorf("secret %s: got %v", secret, err)
+		}
+	}
+}
+
+// fakeSecrets resolves only the keys it holds.
+type fakeSecrets map[string]bool
+
+func (f fakeSecrets) Check(_ context.Context, key string) error {
+	if !f[key] {
+		return fmt.Errorf("no secret named %s", key)
+	}
+	return nil
 }
