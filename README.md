@@ -625,15 +625,17 @@ nono's credential proxy:
 
 | Key | Description |
 | --- | --- |
-| `auth` | Authentication mode: `"service-account"` or `"host"` (required). |
+| `auth` | Authentication mode: `"service-account"`, `"host"` or `"in_cluster"` (required). |
 | `context` | Context name from your host kubeconfig (required for `host`, optional for `service-account`). |
-| `service_account` | Name of the service account to mint tokens for (required for `service-account`). |
-| `service_account_namespace` | Namespace of the service account (default: `"default"`). |
+| `service_account` | Name of the service account to mint tokens for (required for `service-account`, optional for `in_cluster`). |
+| `service_account_namespace` | Namespace of the service account (default: `"default"`, or the namespace of the pod for `in_cluster`). |
 | `token_ttl` | Lifetime of minted service account tokens (default: `"1h"`). |
 | `kubeconfig` | Path to host kubeconfig (default: `~/.kube/config`). |
 | `kubectl` | Path to host `kubectl` binary (must be a real binary, not a shim). |
 | `cluster_ca` | Path to PEM CA certificate if the kubeconfig context lacks one. |
 | `allow_missing_ca` | Allow clusters without a CA certificate (default: `false`). |
+| `api_server` | Address of the API server for `in_cluster` (default: `"https://kubernetes.default.svc"`). |
+| `service_account_dir` | Where the pod has its service account mounted, for `in_cluster` (default: `"/var/run/secrets/kubernetes.io/serviceaccount"`). |
 | `current` | The cluster that the sandbox kubeconfig selects (required with more than one cluster). |
 | `clusters` | One table for each cluster, keyed by its context name in the sandbox. |
 
@@ -659,11 +661,35 @@ auth    = "host"
 context = "k3d-dev"
 ```
 
+**In-cluster mode (inside a pod):**
+Uses the service account that the pod runs as. A pod has no kubeconfig, but
+Kubernetes mounts a token, the cluster CA and the namespace into it. nono reads
+the token on the host side of the sandbox and injects it through the proxy, so
+the token never enters the sandbox:
+
+```toml
+[tools.kubernetes]
+auth = "in_cluster"
+```
+
+`nn` never detects a pod on its own. To use one `nn.toml` on a laptop and in a
+pod, set `auth` in the pod spec with `NN_TOOLS_KUBERNETES_AUTH=in_cluster`.
+
+In this mode, `context`, `kubeconfig`, `cluster_ca` and `allow_missing_ca` are
+errors, because a pod has no kubeconfig. To drop one of them for a run, set its
+variable to an empty value, for example `NN_TOOLS_KUBERNETES_CONTEXT=`.
+
+The agent acts as `service_account` if you set it, and otherwise as the account
+of the pod. If `service_account` names another account than the one of the pod,
+nono mints a token for that account with `kubectl`. The image then needs
+`kubectl`, and the pod needs RBAC permission to create tokens for that account.
+If it names the account of the pod, nono reads the mounted token.
+
 **More than one cluster:**
 Declare one table under `clusters` for each cluster. The key of the table is
 the context name in the sandbox, so the agent runs `kubectl --context prod`.
-Each table holds `auth`, `context`, `service_account`, `cluster_ca` and
-`allow_missing_ca` for its cluster. The other keys in `[tools.kubernetes]` are
+Each table holds `auth`, `context`, `service_account`, `cluster_ca`,
+`allow_missing_ca`, `api_server` and `service_account_dir` for its cluster. The other keys in `[tools.kubernetes]` are
 defaults that every cluster shares, and a cluster table can override them.
 
 ```toml
@@ -687,8 +713,8 @@ mints each token at launch, so a backend that asks for a touch asks once for
 each cluster.
 
 nono picks a proxy route by the host of the API server. If two clusters use
-the same API server and one of them uses `"service-account"`, `nn` stops with
-an error. The `clusters` tables come from `nn.toml` only, because they have no
+the same API server and one of them does not use `"host"`, `nn` stops with an
+error. The `clusters` tables come from `nn.toml` only, because they have no
 spelling as one environment variable.
 
 To drop a cluster that an earlier file declares, set `enabled = false` in its
