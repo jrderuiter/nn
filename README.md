@@ -247,9 +247,12 @@ the file at the same place in the main checkout:
    directory has none, `nn` reads the file from the same directory in the main
    checkout. This also applies when the `nn.toml` came from the worktree.
 
-`nn` prints a warning for each file that it takes from the main checkout. A file
-in the worktree always wins, so to stop the fallback for one file, create it in
-the worktree.
+`nn` prints a warning when it takes `nn.toml` or `fnox.toml` from the main
+checkout, because a worktree usually has these files. For a local file, the
+fallback is normal, so `nn run` names it only with `--verbose`. `nn doctor`
+marks every file from the main checkout with `(main checkout)`. A file in the
+worktree always wins, so to stop the fallback for one file, create it in the
+worktree.
 
 A later layer cannot delete a key, because TOML has no null. To remove a tool
 that an earlier layer declares, set `enabled = false` in its section:

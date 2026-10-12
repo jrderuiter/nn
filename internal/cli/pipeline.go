@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -88,7 +89,7 @@ type options struct {
 	diagnostics bool
 
 	// quietFallback stops the warnings about files from the main checkout,
-	// for a caller that prepares more than once and already warned.
+	// for a caller that lists the files itself.
 	quietFallback bool
 
 	// stderr receives warnings and the trace. Nil means os.Stderr.
@@ -172,9 +173,7 @@ func prepare(opts options) (*prep, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !opts.quietFallback {
-		warnFromMain(opts, cfg.FromMainCheckout())
-	}
+	warnFromMain(opts, cfg.FromMainCheckout())
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
@@ -221,11 +220,23 @@ var (
 
 // warnFromMain names each file that a linked worktree takes from the main
 // checkout, because a change to that file also changes the runs of the
-// worktree.
+// worktree. A local file is named only with --verbose: nobody commits it, so a
+// worktree never has one, and a warning on every run would be noise.
 func warnFromMain(opts options, files []string) {
+	if opts.quietFallback {
+		return
+	}
 	for _, f := range files {
+		if isLocalFile(f) && !opts.verbose {
+			continue
+		}
 		opts.warnf("this worktree has no %s, so nn uses %s from the main checkout", filepath.Base(f), f)
 	}
+}
+
+func isLocalFile(path string) bool {
+	name := filepath.Base(path)
+	return name == config.LocalFileName || slices.Contains(fnoxLocalFiles, name)
 }
 
 // resolver is newResolver for a caller that does not report the fnox files.

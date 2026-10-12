@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -47,6 +48,9 @@ func doctor(ctx context.Context, opts options, w io.Writer) error {
 	if err := requireConfig(opts); err != nil {
 		return err
 	}
+	// The list below names every file from the main checkout, so the
+	// warnings would only repeat it.
+	opts.quietFallback = true
 	pr, err := prepare(opts)
 	if err != nil {
 		return err
@@ -54,12 +58,14 @@ func doctor(ctx context.Context, opts options, w io.Writer) error {
 	cfg := pr.cfg
 
 	fmt.Fprintln(w, "\nconfiguration")
+	fromMain := cfg.FromMainCheckout()
 	for _, s := range cfg.Sources() {
-		fmt.Fprintf(w, "  %s\n", s)
+		fmt.Fprintf(w, "  %s%s\n", s, mainMark(s, fromMain))
 	}
-
-	_, fnoxFromMain := newResolver(cfg, pr.ws.Workdir)
-	warnFromMain(opts, fnoxFromMain)
+	r, fnoxFromMain := newResolver(cfg, pr.ws.Workdir)
+	for _, s := range r.Imports {
+		fmt.Fprintf(w, "  %s%s\n", s, mainMark(s, fnoxFromMain))
+	}
 
 	fmt.Fprintln(w, "\ntools")
 	if len(cfg.Tools) == 0 {
@@ -97,7 +103,6 @@ func doctor(ctx context.Context, opts options, w io.Writer) error {
 	for _, agent := range agents {
 		o := opts
 		o.agent = agent
-		o.quietFallback = true
 		label := workspace.ProfileFile(agent)
 		p, err := build(ctx, o, nil)
 		if err == nil {
@@ -131,4 +136,12 @@ func restLines(err error) []string {
 		out = append(out, strings.TrimSpace(l))
 	}
 	return out
+}
+
+// mainMark marks a file that came from the main checkout of a linked worktree.
+func mainMark(path string, fromMain []string) string {
+	if slices.Contains(fromMain, path) {
+		return " (main checkout)"
+	}
+	return ""
 }
