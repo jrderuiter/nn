@@ -62,3 +62,34 @@ jobs:
       - run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
+
+  nightly:
+    # Every push to main replaces the nightly release and moves its tag. The tag
+    # does not match "v*", so it starts no run of its own.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [check, integration]
+    runs-on: ubuntu-latest
+    # A run waits for the one before it, so a cancel never falls between the
+    # delete and the create.
+    concurrency:
+      group: nightly
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - run: VERSION="nightly-${GITHUB_SHA::7}" mise run dist
+      - run: cd dist && sha256sum nn_* > checksums.txt
+      - run: gh release delete nightly --cleanup-tag --yes || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - run: |
+          gh release create nightly dist/* \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --latest=false \
+            --title "Nightly" \
+            --notes "A build of main at $GITHUB_SHA. It can break at any time."
+        env:
+          GH_TOKEN: ${{ github.token }}

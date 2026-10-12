@@ -49,6 +49,15 @@ gh release download --repo jrderuiter/nn --pattern 'nn_linux_amd64' --output /us
 chmod +x /usr/local/bin/nn
 ```
 
+To try the latest change on `main`, download the nightly release. CI builds it
+after every push to `main` and replaces the previous nightly release. A nightly
+binary can break at any time:
+
+```
+gh release download nightly --repo jrderuiter/nn --pattern 'nn_linux_amd64' --output /usr/local/bin/nn --clobber
+chmod +x /usr/local/bin/nn
+```
+
 ## Getting started
 
 Follow these steps to set up and run an agent.
