@@ -601,3 +601,75 @@ func TestEnvUnsetsABoolValue(t *testing.T) {
 		t.Fatal("a false value must turn the setting off")
 	}
 }
+
+// linkedWorktree lays out a main checkout and a linked worktree beside it, the
+// way git does.
+func linkedWorktree(t *testing.T) (main, wt string) {
+	t.Helper()
+	root := t.TempDir()
+	main = filepath.Join(root, "main")
+	wt = filepath.Join(root, "wt")
+	write(t, filepath.Join(main, ".git", "worktrees", "wt", "commondir"), "../..\n")
+	write(t, filepath.Join(wt, ".git"), "gitdir: "+filepath.Join(main, ".git", "worktrees", "wt")+"\n")
+	return main, wt
+}
+
+func TestWorktreeFallsBackToTheMainCheckout(t *testing.T) {
+	main, wt := linkedWorktree(t)
+	write(t, filepath.Join(main, "nn.toml"), "[nono]\nnetwork_profile = \"claude-code\"\n")
+	write(t, filepath.Join(main, LocalFileName), "[nono]\ngroups = [\"mine\"]\n")
+
+	cfg, err := Load(Options{Dir: wt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Nono.NetworkProfile != "claude-code" || len(cfg.Nono.Groups) != 1 {
+		t.Fatalf("both files of the main checkout must apply, got %+v", cfg.Nono)
+	}
+	if len(cfg.FromMainCheckout()) != 2 {
+		t.Fatalf("both files must be reported, got %v", cfg.FromMainCheckout())
+	}
+}
+
+// A worktree holds the committed nn.toml but not the local file, which nobody
+// commits. The local file of the main checkout still applies.
+func TestWorktreeTakesOnlyTheMissingLocalFile(t *testing.T) {
+	main, wt := linkedWorktree(t)
+	write(t, filepath.Join(main, "nn.toml"), "[nono]\nnetwork_profile = \"main\"\n")
+	write(t, filepath.Join(main, LocalFileName), "[nono]\ngroups = [\"mine\"]\n")
+	write(t, filepath.Join(wt, "nn.toml"), "[nono]\nnetwork_profile = \"branch\"\n")
+
+	cfg, err := Load(Options{Dir: wt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Nono.NetworkProfile != "branch" {
+		t.Fatalf("the nn.toml of the worktree must win, got %q", cfg.Nono.NetworkProfile)
+	}
+	if len(cfg.Nono.Groups) != 1 {
+		t.Fatalf("the local file of the main checkout must apply, got %+v", cfg.Nono)
+	}
+	want := []string{filepath.Join(main, LocalFileName)}
+	if got := cfg.FromMainCheckout(); len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestWorktreeFilesWin(t *testing.T) {
+	main, wt := linkedWorktree(t)
+	write(t, filepath.Join(main, "nn.toml"), "[nono]\nnetwork_profile = \"main\"\n")
+	write(t, filepath.Join(main, LocalFileName), "[nono]\ngroups = [\"main\"]\n")
+	write(t, filepath.Join(wt, "nn.toml"), "[nono]\nnetwork_profile = \"branch\"\n")
+	write(t, filepath.Join(wt, LocalFileName), "[nono]\nallow_domain = [\"example.com\"]\n")
+
+	cfg, err := Load(Options{Dir: wt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Nono.Groups) != 0 || len(cfg.Nono.AllowDomain) != 1 {
+		t.Fatalf("only the files of the worktree must apply, got %+v", cfg.Nono)
+	}
+	if len(cfg.FromMainCheckout()) != 0 {
+		t.Fatalf("got %v", cfg.FromMainCheckout())
+	}
+}

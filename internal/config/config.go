@@ -29,8 +29,9 @@ type Config struct {
 	// section.
 	Tools map[string]toml.Primitive `toml:"tools"`
 
-	md      toml.MetaData
-	sources []string
+	md       toml.MetaData
+	sources  []string
+	fromMain []string
 }
 
 // Nono is the [nono] section.
@@ -89,6 +90,10 @@ func (c *Config) Meta() toml.MetaData { return c.md }
 
 // Sources lists the configuration files that contributed, in load order.
 func (c *Config) Sources() []string { return c.sources }
+
+// FromMainCheckout lists the sources that came from the main checkout, because
+// the linked worktree that nn runs in does not have them.
+func (c *Config) FromMainCheckout() []string { return c.fromMain }
 
 // RawProfile decodes the [nono.profile] block. The block goes through JSON
 // rather than straight into the struct, because the profile types are spelled

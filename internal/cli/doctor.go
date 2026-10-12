@@ -58,6 +58,9 @@ func doctor(ctx context.Context, opts options, w io.Writer) error {
 		fmt.Fprintf(w, "  %s\n", s)
 	}
 
+	_, fnoxFromMain := newResolver(cfg, pr.ws.Workdir)
+	warnFromMain(opts, fnoxFromMain)
+
 	fmt.Fprintln(w, "\ntools")
 	if len(cfg.Tools) == 0 {
 		fmt.Fprintf(w, "  none configured; available: %s\n", strings.Join(tool.Known(), ", "))
@@ -94,6 +97,7 @@ func doctor(ctx context.Context, opts options, w io.Writer) error {
 	for _, agent := range agents {
 		o := opts
 		o.agent = agent
+		o.quietFallback = true
 		label := workspace.ProfileFile(agent)
 		p, err := build(ctx, o, nil)
 		if err == nil {

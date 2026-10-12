@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jrderuiter/nn/internal/config"
 	"github.com/jrderuiter/nn/internal/nono"
 	"github.com/jrderuiter/nn/internal/tool"
 )
@@ -137,5 +138,73 @@ func TestUnixSocketsAreBlockedByDefault(t *testing.T) {
 	off := profileFor(t, "[nono.profile.linux]\naf_unix_mediation = \"off\"\n").Linux
 	if off == nil || off.AfUnixMediation != "off" {
 		t.Errorf("the [nono.profile] block must turn the block off, got %+v", off)
+	}
+}
+
+// fnoxWorktree lays out a main checkout and a linked worktree beside it, each
+// with the fnox files named, and returns both paths.
+func fnoxWorktree(t *testing.T, inMain, inWorktree []string) (main, wt string) {
+	t.Helper()
+	root := t.TempDir()
+	main = filepath.Join(root, "main")
+	wt = filepath.Join(root, "wt")
+	files := map[string]string{
+		filepath.Join(main, ".git", "worktrees", "wt", "commondir"): "../..\n",
+		filepath.Join(wt, ".git"):                                   "gitdir: " + filepath.Join(main, ".git", "worktrees", "wt") + "\n",
+	}
+	for _, n := range inMain {
+		files[filepath.Join(main, n)] = ""
+	}
+	for _, n := range inWorktree {
+		files[filepath.Join(wt, n)] = ""
+	}
+	for p, body := range files {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return main, wt
+}
+
+// The local fnox file of the main checkout joins the committed fnox file of
+// the worktree, and comes first so that it wins.
+func TestFnoxTakesTheMissingLocalFileFromTheMainCheckout(t *testing.T) {
+	main, wt := fnoxWorktree(t, []string{"fnox.toml", "fnox.local.toml"}, []string{"fnox.toml"})
+	r, fromMain := newResolver(&config.Config{}, wt)
+	want := []string{filepath.Join(main, "fnox.local.toml"), filepath.Join(wt, "fnox.toml")}
+	if strings.Join(r.Imports, ",") != strings.Join(want, ",") {
+		t.Fatalf("got %v, want %v", r.Imports, want)
+	}
+	if len(fromMain) != 1 || fromMain[0] != want[0] {
+		t.Fatalf("got %v", fromMain)
+	}
+}
+
+func TestFnoxSearchesItselfWhenTheWorktreeHasEveryFile(t *testing.T) {
+	_, wt := fnoxWorktree(t, []string{"fnox.toml", "fnox.local.toml"}, []string{"fnox.toml", "fnox.local.toml"})
+	r, fromMain := newResolver(&config.Config{}, wt)
+	if len(r.Imports) != 0 || len(fromMain) != 0 {
+		t.Fatalf("got %v, %v", r.Imports, fromMain)
+	}
+}
+
+func TestFnoxConfigSettingTurnsTheFallbackOff(t *testing.T) {
+	_, wt := fnoxWorktree(t, []string{"fnox.toml", "fnox.local.toml"}, nil)
+	cfg := &config.Config{Fnox: config.Fnox{Config: "other.toml"}}
+	r, fromMain := newResolver(cfg, wt)
+	if len(r.Imports) != 0 || len(fromMain) != 0 {
+		t.Fatalf("got %v, %v", r.Imports, fromMain)
+	}
+}
+
+func TestFnoxTakesBothFilesFromTheMainCheckout(t *testing.T) {
+	main, wt := fnoxWorktree(t, []string{"fnox.toml", "fnox.local.toml"}, nil)
+	_, fromMain := newResolver(&config.Config{}, wt)
+	want := []string{filepath.Join(main, "fnox.local.toml"), filepath.Join(main, "fnox.toml")}
+	if strings.Join(fromMain, ",") != strings.Join(want, ",") {
+		t.Fatalf("got %v, want %v", fromMain, want)
 	}
 }

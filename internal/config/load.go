@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/jrderuiter/nn/internal/worktree"
 )
 
 // FileName is the project configuration file, which a team commits.
@@ -38,7 +40,7 @@ type Options struct {
 }
 
 func Load(o Options) (*Config, error) {
-	files, err := configFiles(o.Dir, o.Explicit)
+	files, fromMain, err := configFiles(o.Dir, o.Explicit)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +65,7 @@ func Load(o Options) (*Config, error) {
 	if len(merged) == 0 {
 		// No configuration at all is a valid state: `nn run -- claude` with
 		// defaults only.
-		return &Config{sources: files}, nil
+		return &Config{sources: files, fromMain: fromMain}, nil
 	}
 
 	var buf bytes.Buffer
@@ -83,6 +85,7 @@ func Load(o Options) (*Config, error) {
 	}
 	cfg.md = md
 	cfg.sources = files
+	cfg.fromMain = fromMain
 	return cfg, nil
 }
 
@@ -99,29 +102,37 @@ func checkAgentNames(source string, agents map[string]Agent) error {
 	return nil
 }
 
-func configFiles(dir, explicit string) ([]string, error) {
+// configFiles returns the files to read, in load order, and the ones among them
+// that came from the main checkout of a linked worktree.
+func configFiles(dir, explicit string) (files, fromMain []string, err error) {
 	if explicit != "" {
 		if _, err := os.Stat(explicit); err != nil {
-			return nil, fmt.Errorf("configuration file %s: %w", explicit, err)
+			return nil, nil, fmt.Errorf("configuration file %s: %w", explicit, err)
 		}
-		return []string{explicit}, nil
+		return []string{explicit}, nil, nil
 	}
-	var out []string
 	if u := userConfigPath(); u != "" {
 		if _, err := os.Stat(u); err == nil {
-			out = append(out, u)
+			files = append(files, u)
 		}
 	}
-	if p := Find(dir); p != "" {
-		out = append(out, p)
-		// The local layer belongs to the project file that was found, so it is
-		// not searched for on its own.
-		local := filepath.Join(filepath.Dir(p), LocalFileName)
-		if _, err := os.Stat(local); err == nil {
-			out = append(out, local)
+	p, main := worktree.Lookup(dir, FileName)
+	if p == "" {
+		return files, nil, nil
+	}
+	files = append(files, p)
+	if main {
+		fromMain = append(fromMain, p)
+	}
+	// The local layer belongs to the project file that was found, so it is
+	// not searched for on its own.
+	if local, localMain := worktree.Beside(filepath.Dir(p), LocalFileName); local != "" {
+		files = append(files, local)
+		if main || localMain {
+			fromMain = append(fromMain, local)
 		}
 	}
-	return out, nil
+	return files, fromMain, nil
 }
 
 func describe(files []string) string {
@@ -192,28 +203,12 @@ func mergeMaps(dst, src map[string]any) {
 	}
 }
 
-// Find walks up from dir looking for nn.toml and returns its path, or an empty
-// string when there is none. It stops at a directory holding a .git entry, so a
-// nested repository never picks up its parent's settings.
+// Find returns the path of the project file for dir, or an empty string when
+// there is none. It walks up from dir to the top of the checkout. In a linked
+// worktree without a project file, it searches the main checkout the same way.
 func Find(dir string) string {
-	cur, err := filepath.Abs(dir)
-	if err != nil {
-		return ""
-	}
-	for {
-		p := filepath.Join(cur, FileName)
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-		if _, err := os.Stat(filepath.Join(cur, ".git")); err == nil {
-			return ""
-		}
-		parent := filepath.Dir(cur)
-		if parent == cur {
-			return ""
-		}
-		cur = parent
-	}
+	p, _ := worktree.Lookup(dir, FileName)
+	return p
 }
 
 func userConfigPath() string {
