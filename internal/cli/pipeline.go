@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -87,10 +86,6 @@ type options struct {
 	verbose     bool
 	banner      bool
 	diagnostics bool
-
-	// quietFallback stops the warnings about files from the main checkout,
-	// for a caller that lists the files itself.
-	quietFallback bool
 
 	// stderr receives warnings and the trace. Nil means os.Stderr.
 	stderr io.Writer
@@ -173,7 +168,7 @@ func prepare(opts options) (*prep, error) {
 	if err != nil {
 		return nil, err
 	}
-	warnFromMain(opts, cfg.FromMainCheckout())
+	noteFromMain(opts, cfg.FromMainCheckout())
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
@@ -218,25 +213,16 @@ var (
 	fnoxLocalFiles = []string{"fnox.local.toml", ".fnox.local.toml"}
 )
 
-// warnFromMain names each file that a linked worktree takes from the main
-// checkout, because a change to that file also changes the runs of the
-// worktree. A local file is named only with --verbose: nobody commits it, so a
-// worktree never has one, and a warning on every run would be noise.
-func warnFromMain(opts options, files []string) {
-	if opts.quietFallback {
+// noteFromMain names each file that a linked worktree takes from the main
+// checkout, with --verbose only. The fallback is the normal case for a file
+// that is not committed, so a note on every run would be noise.
+func noteFromMain(opts options, files []string) {
+	if !opts.verbose {
 		return
 	}
 	for _, f := range files {
-		if isLocalFile(f) && !opts.verbose {
-			continue
-		}
 		opts.warnf("this worktree has no %s, so nn uses %s from the main checkout", filepath.Base(f), f)
 	}
-}
-
-func isLocalFile(path string) bool {
-	name := filepath.Base(path)
-	return name == config.LocalFileName || slices.Contains(fnoxLocalFiles, name)
 }
 
 // resolver is newResolver for a caller that does not report the fnox files.
@@ -719,7 +705,7 @@ func (p *plan) resolveSecrets(ctx context.Context) ([]string, error) {
 		return nil, nil
 	}
 	r, fromMain := newResolver(p.cfg, p.ws.Workdir)
-	warnFromMain(p.opts, fromMain)
+	noteFromMain(p.opts, fromMain)
 	// Two routes often want the same key under different names. Fetch each
 	// key once, so a backend that asks for a touch asks once.
 	byKey := map[string]string{}

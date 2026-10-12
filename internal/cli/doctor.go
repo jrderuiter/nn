@@ -48,9 +48,6 @@ func doctor(ctx context.Context, opts options, w io.Writer) error {
 	if err := requireConfig(opts); err != nil {
 		return err
 	}
-	// The list below names every file from the main checkout, so the
-	// warnings would only repeat it.
-	opts.quietFallback = true
 	pr, err := prepare(opts)
 	if err != nil {
 		return err

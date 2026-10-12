@@ -209,20 +209,18 @@ func TestFnoxTakesBothFilesFromTheMainCheckout(t *testing.T) {
 	}
 }
 
-// A worktree never has the local files, so naming them on every run is noise.
-// A committed file from the main checkout is a surprise, and always warns.
-func TestOnlyVerboseNamesALocalFileFromTheMainCheckout(t *testing.T) {
-	files := []string{"/main/nn.toml", "/main/nn.local.toml", "/main/fnox.local.toml"}
+func TestOnlyVerboseNamesAFileFromTheMainCheckout(t *testing.T) {
+	files := []string{"/main/nn.toml", "/main/nn.local.toml"}
 	for _, verbose := range []bool{false, true} {
 		var out strings.Builder
-		warnFromMain(options{stderr: &out, verbose: verbose}, files)
+		noteFromMain(options{stderr: &out, verbose: verbose}, files)
 		got := strings.Count(out.String(), "\n")
-		want := 1
+		want := 0
 		if verbose {
-			want = 3
+			want = 2
 		}
 		if got != want {
-			t.Fatalf("verbose %v: got %d warnings, want %d:\n%s", verbose, got, want, out.String())
+			t.Fatalf("verbose %v: got %d notes, want %d:\n%s", verbose, got, want, out.String())
 		}
 	}
 }
