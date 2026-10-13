@@ -26,6 +26,7 @@ the reasons behind the design.
 | `internal/nono` | The profile types, the merger, and the call to `nono` |
 | `internal/workspace` | The generated artifact directory under `.nono/nn` |
 | `internal/secrets` | Resolving a secret with `fnox get` |
+| `internal/worktree` | Finding a configuration file, with the main checkout as the fallback for a linked worktree |
 
 ## Worktrees
 

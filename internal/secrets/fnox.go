@@ -9,7 +9,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -17,6 +19,10 @@ type Resolver struct {
 	Binary  string // fnox binary, "fnox" by default
 	Config  string // -c path, optional
 	Profile string // -P profile, optional
+	// Imports replaces the search of fnox with these files, highest priority
+	// first. nn sets it when a linked worktree lacks a file that the main
+	// checkout has.
+	Imports []string
 }
 
 func NewResolver(binary, config, profile string) *Resolver {
@@ -26,22 +32,51 @@ func NewResolver(binary, config, profile string) *Resolver {
 	return &Resolver{Binary: binary, Config: config, Profile: profile}
 }
 
-// baseArgs are the flags that every call shares. --non-interactive stops fnox
-// from opening a browser or prompting behind the agent's back.
-func (r *Resolver) baseArgs() []string {
+// command builds a call to fnox get. The cleanup function removes the
+// temporary file that an import needs.
+//
+// fnox reads one -c file, so the imports go into a temporary file that
+// imports them. That file holds paths only, never a value. fnox gives the
+// first import priority over the ones after it.
+func (r *Resolver) command(ctx context.Context, key string) (*exec.Cmd, func(), error) {
+	// --non-interactive stops fnox from opening a browser or prompting behind
+	// the agent's back.
 	args := []string{"--non-interactive"}
-	if r.Config != "" {
-		args = append(args, "-c", r.Config)
+	cleanup := func() {}
+	config := r.Config
+	if len(r.Imports) > 0 {
+		f, err := os.CreateTemp("", "nn-fnox-*.toml")
+		if err != nil {
+			return nil, nil, fmt.Errorf("fnox import file: %w", err)
+		}
+		cleanup = func() { os.Remove(f.Name()) }
+		var b strings.Builder
+		b.WriteString("import = [")
+		for i, p := range r.Imports {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(strconv.Quote(p))
+		}
+		b.WriteString("]\n")
+		_, err = f.WriteString(b.String())
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("fnox import file: %w", err)
+		}
+		config = f.Name()
+	}
+	if config != "" {
+		args = append(args, "-c", config)
 	}
 	if r.Profile != "" {
 		args = append(args, "-P", r.Profile)
 	}
-	return args
-}
-
-// CaptureCommand is the argv that nono runs on the host to fetch a secret.
-func (r *Resolver) CaptureCommand(key string) []string {
-	return append(append([]string{r.Binary}, r.baseArgs()...), "get", key)
+	args = append(args, "get", key)
+	return exec.CommandContext(ctx, r.Binary, args...), cleanup, nil
 }
 
 // Available reports whether the fnox binary is on PATH.
@@ -58,7 +93,12 @@ func (r *Resolver) Get(ctx context.Context, key string) (string, error) {
 	if err := r.Available(); err != nil {
 		return "", err
 	}
-	out, err := exec.CommandContext(ctx, r.Binary, append(r.baseArgs(), "get", key)...).Output()
+	cmd, cleanup, err := r.command(ctx, key)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+	out, err := cmd.Output()
 	if err != nil {
 		var ee *exec.ExitError
 		detail := err.Error()
@@ -81,7 +121,11 @@ func (r *Resolver) Check(ctx context.Context, key string) error {
 	if err := r.Available(); err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, r.Binary, append(r.baseArgs(), "get", key)...)
+	cmd, cleanup, err := r.command(ctx, key)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 	out, err := cmd.Output()
 	if err != nil {
 		var ee *exec.ExitError

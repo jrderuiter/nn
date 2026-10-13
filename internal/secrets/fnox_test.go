@@ -73,3 +73,32 @@ func TestAMissingBinaryIsAnError(t *testing.T) {
 		t.Fatal("a missing fnox must be an error")
 	}
 }
+
+// fnox reads one -c file, so the imports reach it through a file that imports
+// them in order. The file must be gone after the call.
+func TestImportsGoThroughOneFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fnox")
+	body := `#!/bin/sh
+while [ $# -gt 0 ]; do
+  if [ "$1" = "-c" ]; then echo "$2"; cat "$2"; exit 0; fi
+  shift
+done
+exit 1
+`
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := NewResolver(path, "", "")
+	r.Imports = []string{"/main/fnox.local.toml", "/wt/fnox.toml"}
+	out, err := r.Get(context.Background(), "KEY")
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, content, _ := strings.Cut(out, "\n")
+	if want := `import = ["/main/fnox.local.toml", "/wt/fnox.toml"]`; content != want {
+		t.Fatalf("got %q, want %q", content, want)
+	}
+	if _, err := os.Stat(file); !os.IsNotExist(err) {
+		t.Fatalf("the import file %s must be removed, got %v", file, err)
+	}
+}

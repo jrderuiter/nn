@@ -19,6 +19,7 @@ import (
 	"github.com/jrderuiter/nn/internal/secrets"
 	"github.com/jrderuiter/nn/internal/tool"
 	"github.com/jrderuiter/nn/internal/workspace"
+	"github.com/jrderuiter/nn/internal/worktree"
 
 	// Providers register themselves.
 	_ "github.com/jrderuiter/nn/internal/tool/azuredevops"
@@ -167,6 +168,7 @@ func prepare(opts options) (*prep, error) {
 	if err != nil {
 		return nil, err
 	}
+	noteFromMain(opts, cfg.FromMainCheckout())
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
@@ -192,7 +194,7 @@ func prepare(opts options) (*prep, error) {
 			Workdir:     ws.Workdir,
 			ArtifactDir: ws.Dir,
 			HomeDir:     home,
-			Secrets:     secrets.NewResolver(cfg.Fnox.Binary, cfg.Fnox.Config, cfg.Fnox.Profile),
+			Secrets:     resolver(cfg, ws.Workdir),
 			Lookup:      os.LookupEnv,
 			GitRemotes: func(ctx context.Context) ([]string, error) {
 				return remotes(ctx, ws.Workdir)
@@ -203,6 +205,71 @@ func prepare(opts options) (*prep, error) {
 		},
 		providers: providers,
 	}, nil
+}
+
+// fnoxFiles are the names that fnox reads in a directory, by priority.
+var (
+	fnoxFiles      = []string{"fnox.toml", ".fnox.toml"}
+	fnoxLocalFiles = []string{"fnox.local.toml", ".fnox.local.toml"}
+)
+
+// noteFromMain names each file that a linked worktree takes from the main
+// checkout, with --verbose only. The fallback is the normal case for a file
+// that is not committed, so a note on every run would be noise.
+func noteFromMain(opts options, files []string) {
+	if !opts.verbose {
+		return
+	}
+	for _, f := range files {
+		opts.warnf("this worktree has no %s, so nn uses %s from the main checkout", filepath.Base(f), f)
+	}
+}
+
+// resolver is newResolver for a caller that does not report the fnox files.
+func resolver(cfg *config.Config, workdir string) *secrets.Resolver {
+	r, _ := newResolver(cfg, workdir)
+	return r
+}
+
+// newResolver returns the fnox resolver for a run in workdir. It also returns
+// the fnox files that come from the main checkout. A caller warns about them
+// only when it uses fnox, because most runs never do.
+//
+// Normally fnox finds its own files. In a linked worktree, nn looks up the
+// fnox files with the same rule as nn.toml and nn.local.toml. When one comes
+// from the main checkout, nn names both files to fnox, the local file first so
+// that it wins. A [fnox] config setting turns the lookup off.
+func newResolver(cfg *config.Config, workdir string) (*secrets.Resolver, []string) {
+	r := secrets.NewResolver(cfg.Fnox.Binary, cfg.Fnox.Config, cfg.Fnox.Profile)
+	if cfg.Fnox.Config != "" {
+		return r, nil
+	}
+	project, projectFromMain := worktree.Lookup(workdir, fnoxFiles...)
+	var local string
+	var localFromMain bool
+	if project != "" {
+		local, localFromMain = worktree.Beside(filepath.Dir(project), fnoxLocalFiles...)
+		localFromMain = localFromMain || projectFromMain
+	} else {
+		local, localFromMain = worktree.Lookup(workdir, fnoxLocalFiles...)
+	}
+	if !projectFromMain && !localFromMain {
+		return r, nil
+	}
+	var fromMain []string
+	for _, f := range []struct {
+		path string
+		main bool
+	}{{local, localFromMain}, {project, projectFromMain}} {
+		if f.path == "" {
+			continue
+		}
+		r.Imports = append(r.Imports, f.path)
+		if f.main {
+			fromMain = append(fromMain, f.path)
+		}
+	}
+	return r, fromMain
 }
 
 // build runs the whole pipeline up to, but not including, writing files.
@@ -637,7 +704,8 @@ func (p *plan) resolveSecrets(ctx context.Context) ([]string, error) {
 	if len(p.secrets) == 0 {
 		return nil, nil
 	}
-	r := secrets.NewResolver(p.cfg.Fnox.Binary, p.cfg.Fnox.Config, p.cfg.Fnox.Profile)
+	r, fromMain := newResolver(p.cfg, p.ws.Workdir)
+	noteFromMain(p.opts, fromMain)
 	// Two routes often want the same key under different names. Fetch each
 	// key once, so a backend that asks for a touch asks once.
 	byKey := map[string]string{}

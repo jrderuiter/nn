@@ -234,6 +234,24 @@ kubectl = "/opt/homebrew/bin/kubectl"
 `nn` reads `nn.local.toml` only from the directory of the `nn.toml` that it
 found. When you pass `--config`, `nn` reads only that file.
 
+#### Git worktrees
+
+A linked git worktree, which `git worktree add` creates, holds only committed
+files. Your `nn.local.toml` stays behind in the main checkout. `nn` looks up each
+file in the worktree first. If the worktree does not have the file, `nn` uses
+the file at the same place in the main checkout:
+
+1. `nn` searches for `nn.toml` from the working directory up to the top of the
+   worktree. If it finds none, it does the same search in the main checkout.
+2. `nn` reads `nn.local.toml` from the directory of that `nn.toml`. If that
+   directory has none, `nn` reads the file from the same directory in the main
+   checkout. This also applies when the `nn.toml` came from the worktree.
+
+To see which files come from the main checkout, run `nn run --verbose` or
+`nn doctor`. `nn doctor` marks each of these files with `(main checkout)`. A file in the
+worktree always wins, so to stop the fallback for one file, create it in the
+worktree.
+
 A later layer cannot delete a key, because TOML has no null. To remove a tool
 that an earlier layer declares, set `enabled = false` in its section:
 
@@ -322,6 +340,13 @@ and system keychains. To store a secret with a specific provider:
 fnox provider add op 1password --vault Engineering
 fnox set GITHUB_TOKEN --provider op
 ```
+
+In a linked git worktree, `nn` looks up `fnox.toml` and `fnox.local.toml` with
+the same rules as `nn.toml` and `nn.local.toml`. See
+[Git worktrees](#git-worktrees). If one of them comes from the main checkout,
+`nn` gives fnox exactly these two files, and `fnox.local.toml` wins. fnox then
+does not search for other files, such as a file for a profile. When you set
+`config` in the `[fnox]` section, `nn` does no lookup.
 
 When you start an agent session, `nn` resolves the required secrets once on the
 host using `fnox get <key>`. Resolving up front is a deliberate security decision:

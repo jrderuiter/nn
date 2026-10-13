@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -54,8 +55,13 @@ func doctor(ctx context.Context, opts options, w io.Writer) error {
 	cfg := pr.cfg
 
 	fmt.Fprintln(w, "\nconfiguration")
+	fromMain := cfg.FromMainCheckout()
 	for _, s := range cfg.Sources() {
-		fmt.Fprintf(w, "  %s\n", s)
+		fmt.Fprintf(w, "  %s%s\n", s, mainMark(s, fromMain))
+	}
+	r, fnoxFromMain := newResolver(cfg, pr.ws.Workdir)
+	for _, s := range r.Imports {
+		fmt.Fprintf(w, "  %s%s\n", s, mainMark(s, fnoxFromMain))
 	}
 
 	fmt.Fprintln(w, "\ntools")
@@ -127,4 +133,12 @@ func restLines(err error) []string {
 		out = append(out, strings.TrimSpace(l))
 	}
 	return out
+}
+
+// mainMark marks a file that came from the main checkout of a linked worktree.
+func mainMark(path string, fromMain []string) string {
+	if slices.Contains(fromMain, path) {
+		return " (main checkout)"
+	}
+	return ""
 }
