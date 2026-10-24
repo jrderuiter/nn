@@ -103,6 +103,8 @@ func caseOptions(t *testing.T, dir string) options {
 		gitCommonDir: func(context.Context, string) (string, error) {
 			return "", nil
 		},
+		// A capture command names the nn binary, which is the test binary here.
+		executable: "/usr/local/bin/nn",
 		// The tests may run inside a herdr pane themselves.
 		getenv: func(string) string { return "" },
 	}

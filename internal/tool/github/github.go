@@ -1,10 +1,13 @@
 // Package github grants GitHub API and git-over-HTTPS access through nono's
-// credential proxy, with the token supplied by fnox on demand.
+// credential proxy, with a token from fnox or one that a GitHub App mints.
 package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"regexp"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 
@@ -15,8 +18,18 @@ import (
 
 // Config is the [tools.github] table.
 type Config struct {
-	// Secret is the fnox key that holds the token.
+	// Secret is the fnox key that holds the token, or the App private key
+	// when AppID is set.
 	Secret string `toml:"secret"`
+	// AppID switches to a GitHub App. nn then mints installation tokens from
+	// the App private key, and nono asks for a new one before the old one
+	// expires.
+	AppID string `toml:"app_id"`
+	// InstallationID names the App installation. When it is empty, the
+	// github.com remote of the repository finds it.
+	InstallationID string `toml:"installation_id"`
+	// Repositories narrows an App token to these repository names.
+	Repositories []string `toml:"repositories"`
 	// Git allows clone, fetch and push over HTTPS. It is on by default,
 	// because an agent with API access but no git access cannot do the thing
 	// it was given the repository for.
@@ -36,6 +49,7 @@ func init() {
 	// The prototype describes the shape, not the defaults: it is only read for
 	// the field names that the environment can set.
 	tool.Register("github", New, func() any { return &Config{} })
+	tool.RegisterCredential("github", credential)
 }
 
 // New decodes the tool's own table.
@@ -43,12 +57,18 @@ func New(md toml.MetaData, prim toml.Primitive) (tool.Provider, error) {
 	// The optional booleans start nil and default to true afterwards. They
 	// cannot be pre-filled: the decoder writes through an existing pointer, so
 	// sharing one variable would let a single false value turn all of them off.
-	cfg := Config{Secret: "GITHUB_TOKEN"}
+	var cfg Config
 	if err := md.PrimitiveDecode(prim, &cfg); err != nil {
 		return nil, err
 	}
+	if cfg.AppID == "" && (cfg.InstallationID != "" || len(cfg.Repositories) > 0) {
+		return nil, errors.New("installation_id and repositories need app_id")
+	}
 	if cfg.Secret == "" {
-		return nil, fmt.Errorf("secret must not be empty")
+		cfg.Secret = "GITHUB_TOKEN"
+		if cfg.AppID != "" {
+			cfg.Secret = "GITHUB_APP_PRIVATE_KEY"
+		}
 	}
 	for _, f := range []**bool{&cfg.GHCLI, &cfg.Git, &cfg.RewriteSSH} {
 		if *f == nil {
@@ -62,13 +82,19 @@ func New(md toml.MetaData, prim toml.Primitive) (tool.Provider, error) {
 func (p *provider) Name() string { return "github" }
 
 func (p *provider) Preflight(ctx context.Context, e *tool.Env) error {
+	if p.cfg.AppID != "" {
+		if _, err := p.installation(ctx, e); err != nil {
+			return err
+		}
+	}
 	return e.Secrets.Check(ctx, p.cfg.Secret)
 }
 
 func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error) {
 	// env:// rather than cmd://. nn resolves the token once, while the user is
 	// starting the agent, and hands it to nono in its environment. A cmd://
-	// capture would run fnox mid-session instead.
+	// capture would run fnox mid-session instead. An App token expires within
+	// the hour, so appRoutes uses cmd:// with a capture that needs no fnox.
 	// One host variable per route. Sharing a credential_key across both would
 	// bind them to a single broker credential, and a phantom issued for the
 	// basic-auth route resolves to a user:token pair, which is not what the
@@ -117,23 +143,118 @@ func (p *provider) Build(ctx context.Context, e *tool.Env) (*tool.Result, error)
 		}
 	}
 
-	if *p.cfg.GHCLI {
-		// No filesystem grant: this sits inside the artifact directory, which
-		// the base profile already grants recursively.
-		f.Environment.SetVars = map[string]string{"GH_CONFIG_DIR": workspace.ProfileVar + "/gh"}
-	}
-
 	secrets := []tool.Secret{{EnvVar: tokenVar, Key: p.cfg.Secret}}
 	if *p.cfg.Git {
 		// The same fnox key, read once and placed under a second name.
 		// GitHub takes a token as the password for any user name.
 		secrets = append(secrets, tool.Secret{EnvVar: gitVar, Key: p.cfg.Secret, Format: "x-access-token:{}"})
 	}
+	if p.cfg.AppID != "" {
+		var err error
+		if secrets, err = p.appRoutes(ctx, e, f); err != nil {
+			return nil, err
+		}
+	}
+
+	if *p.cfg.GHCLI {
+		// No filesystem grant: this sits inside the artifact directory, which
+		// the base profile already grants recursively.
+		f.Environment.SetVars = map[string]string{"GH_CONFIG_DIR": workspace.ProfileVar + "/gh"}
+	}
+
 	r := &tool.Result{Fragment: f, Secrets: secrets}
 	if *p.cfg.Git && *p.cfg.RewriteSSH {
 		r.GitConfig = sshRewrite()
 	}
 	return r, nil
+}
+
+// appRoutes turns the routes of f into captures that mint App tokens. The App
+// private key is the only secret: nn resolves it at launch, and nono hands it
+// to each capture in its environment, so a new token never asks fnox again.
+func (p *provider) appRoutes(ctx context.Context, e *tool.Env, f *nono.Profile) ([]tool.Secret, error) {
+	target, err := p.installation(ctx, e)
+	if err != nil {
+		return nil, err
+	}
+	args := []string{e.Executable, "credential", "github", "--app-id", p.cfg.AppID}
+	args = append(args, target...)
+	for _, r := range p.cfg.Repositories {
+		args = append(args, "--repository", r)
+	}
+	f.CredentialCapture = map[string]nono.CredentialCapture{}
+	for _, name := range f.Network.Credentials {
+		cmd := append([]string(nil), args...)
+		if name == "github_git" {
+			// basic_auth encodes the value as it is, so the capture must
+			// print the user:password pair.
+			cmd = append(cmd, "--git")
+		}
+		route := f.Network.CustomCredentials[name]
+		route.CredentialKey = "cmd://" + name
+		f.Network.CustomCredentials[name] = route
+		f.CredentialCapture[name] = nono.CredentialCapture{
+			Command:     cmd,
+			TimeoutSecs: 30,
+			// An installation token lasts an hour. Ten minutes of margin
+			// keeps a cached token from expiring during a long request.
+			CacheTTLSecs: 50 * 60,
+		}
+	}
+	return []tool.Secret{{EnvVar: appKeyVar, Key: p.cfg.Secret}}, nil
+}
+
+// installation returns the capture arguments that find the App installation:
+// the configured id, or else the one github.com repository of the remotes.
+func (p *provider) installation(ctx context.Context, e *tool.Env) ([]string, error) {
+	if p.cfg.InstallationID != "" {
+		return []string{"--installation-id", p.cfg.InstallationID}, nil
+	}
+	var remotes []string
+	if e.GitRemotes != nil {
+		var err error
+		if remotes, err = e.GitRemotes(ctx); err != nil {
+			return nil, fmt.Errorf("list git remotes: %w", err)
+		}
+	}
+	var found []string
+	for _, r := range remotes {
+		if repo, ok := parseRemote(r); ok && !containsFold(found, repo) {
+			found = append(found, repo)
+		}
+	}
+	switch len(found) {
+	case 1:
+		return []string{"--repo", found[0]}, nil
+	case 0:
+		return nil, errors.New("set installation_id, because no git remote names a github.com repository")
+	default:
+		// A fork has the App on one side only, and a guess would mint
+		// for the wrong one or fail at the first request.
+		return nil, fmt.Errorf("set installation_id, because the git remotes name more than one github.com repository: %s", strings.Join(found, ", "))
+	}
+}
+
+// remotePattern matches the HTTPS and both ssh spellings of a github.com
+// remote, and captures owner/name.
+var remotePattern = regexp.MustCompile(`^(?:https://(?:[^@/]+@)?github\.com/|git@github\.com:|ssh://git@github\.com/)([A-Za-z0-9-]+/[A-Za-z0-9._-]+?)(?:\.git)?/?$`)
+
+func parseRemote(remote string) (string, bool) {
+	m := remotePattern.FindStringSubmatch(remote)
+	if m == nil {
+		return "", false
+	}
+	return m[1], true
+}
+
+// containsFold compares without case, because GitHub does.
+func containsFold(list []string, s string) bool {
+	for _, v := range list {
+		if strings.EqualFold(v, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // sshRewrite makes git use HTTPS for github.com even when a remote is written

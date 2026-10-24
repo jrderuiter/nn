@@ -20,4 +20,6 @@ name = "Julian de Ruiter"
 email = "307739+jrderuiter@users.noreply.github.com"
 
 [tools.github]
-auth = "pat"
+app_id = "5458029"
+secret = "GITHUB_APP_PRIVATE_KEY"
+repositories = ["nn"]

@@ -1,0 +1,106 @@
+{
+  "$schema": "https://nono.sh/schemas/nono-profile.schema.json",
+  "extends": [
+    "nolabs-ai/claude"
+  ],
+  "groups": {
+    "include": [
+      {
+        "name": "linux_temp_read",
+        "when": "linux"
+      }
+    ]
+  },
+  "filesystem": {
+    "allow": [
+      "$WORKDIR/.nono/nn"
+    ]
+  },
+  "network": {
+    "allow_domain": [
+      "api.github.com",
+      "github.com"
+    ],
+    "credentials": [
+      "github",
+      "github_git"
+    ],
+    "custom_credentials": {
+      "github": {
+        "upstream": "https://api.github.com",
+        "credential_key": "cmd://github",
+        "env_var": "GITHUB_TOKEN",
+        "inject_mode": "header",
+        "inject_header": "Authorization",
+        "credential_format": "token {}"
+      },
+      "github_git": {
+        "upstream": "https://github.com",
+        "credential_key": "cmd://github_git",
+        "env_var": "GITHUB_GIT_AUTH",
+        "inject_mode": "basic_auth"
+      }
+    }
+  },
+  "environment": {
+    "allow_vars": [
+      "PATH",
+      "HOME",
+      "USER",
+      "SHELL",
+      "TERM",
+      "LANG",
+      "LC_*",
+      "TMPDIR"
+    ],
+    "set_vars": {
+      "GH_CONFIG_DIR": "$WORKDIR/.nono/nn/gh",
+      "GIT_CONFIG_COUNT": "3",
+      "GIT_CONFIG_KEY_0": "credential.helper",
+      "GIT_CONFIG_KEY_1": "url.https://github.com/.insteadOf",
+      "GIT_CONFIG_KEY_2": "url.https://github.com/.insteadOf",
+      "GIT_CONFIG_VALUE_0": "",
+      "GIT_CONFIG_VALUE_1": "git@github.com:",
+      "GIT_CONFIG_VALUE_2": "ssh://git@github.com/"
+    }
+  },
+  "workdir": {
+    "access": "readwrite"
+  },
+  "linux": {
+    "af_unix_mediation": "pathname"
+  },
+  "credential_capture": {
+    "github": {
+      "command": [
+        "/usr/local/bin/nn",
+        "credential",
+        "github",
+        "--app-id",
+        "123456",
+        "--repo",
+        "acme/widget",
+        "--repository",
+        "widget"
+      ],
+      "timeout_secs": 30,
+      "cache_ttl_secs": 3000
+    },
+    "github_git": {
+      "command": [
+        "/usr/local/bin/nn",
+        "credential",
+        "github",
+        "--app-id",
+        "123456",
+        "--repo",
+        "acme/widget",
+        "--repository",
+        "widget",
+        "--git"
+      ],
+      "timeout_secs": 30,
+      "cache_ttl_secs": 3000
+    }
+  }
+}

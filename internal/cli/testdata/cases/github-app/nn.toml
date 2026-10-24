@@ -1,0 +1,9 @@
+[nono]
+extends = ["nolabs-ai/claude"]
+
+[fnox]
+binary = "fnox"
+
+[tools.github]
+app_id = "123456"
+repositories = ["widget"]

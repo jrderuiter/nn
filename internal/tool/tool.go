@@ -9,6 +9,7 @@ package tool
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"reflect"
 	"sort"
@@ -40,6 +41,9 @@ type Env struct {
 	// GitCommonDir returns the absolute shared git directory when Workdir is a
 	// linked worktree, and an empty string otherwise.
 	GitCommonDir func(ctx context.Context) (string, error)
+	// Executable is the absolute path of the running nn. A capture command
+	// that calls back into nn names it.
+	Executable string
 }
 
 // Artifact is a file that the generated profile refers to.
@@ -119,6 +123,37 @@ type entry struct {
 }
 
 var registry = map[string]entry{}
+
+// CredentialFunc produces a credential on the host and writes it to out. nono
+// runs it through `nn credential <tool> [args]` from a credential_capture
+// entry, so args carry everything it needs and it reads no nn.toml.
+type CredentialFunc func(ctx context.Context, args []string, out io.Writer) error
+
+var credentials = map[string]CredentialFunc{}
+
+// RegisterCredential adds the credential handler of a tool.
+func RegisterCredential(name string, f CredentialFunc) {
+	if _, dup := credentials[name]; dup {
+		panic("credential registered twice: " + name)
+	}
+	credentials[name] = f
+}
+
+// Credential returns the credential handler of a tool.
+func Credential(name string) (CredentialFunc, bool) {
+	f, ok := credentials[name]
+	return f, ok
+}
+
+// Credentials lists the tools with a credential handler, sorted.
+func Credentials() []string {
+	out := make([]string, 0, len(credentials))
+	for k := range credentials {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
 
 // order fixes the sequence in which providers run, so a generated profile is
 // byte stable across runs and golden tests stay meaningful. Tools come first

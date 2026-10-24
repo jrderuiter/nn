@@ -169,25 +169,25 @@ func fnoxWorktree(t *testing.T, inMain, inWorktree []string) (main, wt string) {
 	return main, wt
 }
 
-// The local fnox file of the main checkout joins the committed fnox file of
-// the worktree, and comes first so that it wins.
-func TestFnoxTakesTheMissingLocalFileFromTheMainCheckout(t *testing.T) {
+// A worktree without the local fnox file runs fnox in the main checkout, which
+// then reads the files there and in the directories above.
+func TestFnoxRunsInTheMainCheckoutForAMissingLocalFile(t *testing.T) {
 	main, wt := fnoxWorktree(t, []string{"fnox.toml", "fnox.local.toml"}, []string{"fnox.toml"})
 	r, fromMain := newResolver(&config.Config{}, wt)
-	want := []string{filepath.Join(main, "fnox.local.toml"), filepath.Join(wt, "fnox.toml")}
-	if strings.Join(r.Imports, ",") != strings.Join(want, ",") {
-		t.Fatalf("got %v, want %v", r.Imports, want)
+	if r.Dir != main {
+		t.Fatalf("fnox runs in %q, want %q", r.Dir, main)
 	}
-	if len(fromMain) != 1 || fromMain[0] != want[0] {
-		t.Fatalf("got %v", fromMain)
+	want := []string{filepath.Join(main, "fnox.local.toml"), filepath.Join(main, "fnox.toml")}
+	if strings.Join(fromMain, ",") != strings.Join(want, ",") {
+		t.Fatalf("got %v, want %v", fromMain, want)
 	}
 }
 
 func TestFnoxSearchesItselfWhenTheWorktreeHasEveryFile(t *testing.T) {
 	_, wt := fnoxWorktree(t, []string{"fnox.toml", "fnox.local.toml"}, []string{"fnox.toml", "fnox.local.toml"})
 	r, fromMain := newResolver(&config.Config{}, wt)
-	if len(r.Imports) != 0 || len(fromMain) != 0 {
-		t.Fatalf("got %v, %v", r.Imports, fromMain)
+	if r.Dir != "" || len(fromMain) != 0 {
+		t.Fatalf("got %q, %v", r.Dir, fromMain)
 	}
 }
 
@@ -195,8 +195,8 @@ func TestFnoxConfigSettingTurnsTheFallbackOff(t *testing.T) {
 	_, wt := fnoxWorktree(t, []string{"fnox.toml", "fnox.local.toml"}, nil)
 	cfg := &config.Config{Fnox: config.Fnox{Config: "other.toml"}}
 	r, fromMain := newResolver(cfg, wt)
-	if len(r.Imports) != 0 || len(fromMain) != 0 {
-		t.Fatalf("got %v, %v", r.Imports, fromMain)
+	if r.Dir != "" || len(fromMain) != 0 {
+		t.Fatalf("got %q, %v", r.Dir, fromMain)
 	}
 }
 
@@ -222,5 +222,35 @@ func TestOnlyVerboseNamesAFileFromTheMainCheckout(t *testing.T) {
 		if got != want {
 			t.Fatalf("verbose %v: got %d notes, want %d:\n%s", verbose, got, want, out.String())
 		}
+	}
+}
+
+// git hands the proxy login from HTTPS_PROXY to every credential helper after
+// a fetch, and the macOS keychain helper fails in the sandbox. The reset comes
+// first, so a helper that a tool sets still applies.
+func TestCredentialHelpersAreClearedBehindTheProxy(t *testing.T) {
+	plan := func(t *testing.T, body string) map[string]string {
+		t.Helper()
+		dir := t.TempDir()
+		path := filepath.Join(dir, "nn.toml")
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		p, err := build(context.Background(), options{workdir: dir, configPath: path, executable: "/bin/nn"}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.profile.Environment == nil {
+			return nil
+		}
+		return p.profile.Environment.SetVars
+	}
+
+	vars := plan(t, "[tools.github]\n")
+	if vars["GIT_CONFIG_KEY_0"] != "credential.helper" || vars["GIT_CONFIG_VALUE_0"] != "" {
+		t.Errorf("the helpers are not cleared first: %v", vars)
+	}
+	if _, ok := plan(t, "[tools.mise]\n")["GIT_CONFIG_COUNT"]; ok {
+		t.Error("without the proxy there is no login to store, so nothing to clear")
 	}
 }

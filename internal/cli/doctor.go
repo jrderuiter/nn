@@ -59,8 +59,8 @@ func doctor(ctx context.Context, opts options, w io.Writer) error {
 	for _, s := range cfg.Sources() {
 		fmt.Fprintf(w, "  %s%s\n", s, mainMark(s, fromMain))
 	}
-	r, fnoxFromMain := newResolver(cfg, pr.ws.Workdir)
-	for _, s := range r.Imports {
+	_, fnoxFromMain := newResolver(cfg, pr.ws.Workdir)
+	for _, s := range fnoxFromMain {
 		fmt.Fprintf(w, "  %s%s\n", s, mainMark(s, fnoxFromMain))
 	}
 
