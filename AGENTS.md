@@ -102,6 +102,11 @@ A tool is one thing an agent can be given. Follow the shape of
    `mise run golden`.
 9. Document the tool in `README.md`.
 
+If nono must fetch a credential during the session, add a `credential_capture`
+that runs `nn credential <name>`, and register the handler with
+`tool.RegisterCredential`. `Env.Executable` is the path of `nn`. The handler
+reads no `nn.toml`, so the capture arguments must carry everything it needs.
+
 `Build` returns a fragment and its artifacts. It never invokes nono, never
 writes a file, and never resolves a secret. The pipeline does all three.
 

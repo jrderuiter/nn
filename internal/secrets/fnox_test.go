@@ -74,31 +74,24 @@ func TestAMissingBinaryIsAnError(t *testing.T) {
 	}
 }
 
-// fnox reads one -c file, so the imports reach it through a file that imports
-// them in order. The file must be gone after the call.
-func TestImportsGoThroughOneFile(t *testing.T) {
+// In a worktree, fnox runs in the main checkout, so it finds the files there
+// and in the directories above.
+func TestDirIsWhereFnoxRuns(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "fnox")
-	body := `#!/bin/sh
-while [ $# -gt 0 ]; do
-  if [ "$1" = "-c" ]; then echo "$2"; cat "$2"; exit 0; fi
-  shift
-done
-exit 1
-`
-	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte("#!/bin/sh\npwd -P\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
 		t.Fatal(err)
 	}
 	r := NewResolver(path, "", "")
-	r.Imports = []string{"/main/fnox.local.toml", "/wt/fnox.toml"}
+	r.Dir = dir
 	out, err := r.Get(context.Background(), "KEY")
 	if err != nil {
 		t.Fatal(err)
 	}
-	file, content, _ := strings.Cut(out, "\n")
-	if want := `import = ["/main/fnox.local.toml", "/wt/fnox.toml"]`; content != want {
-		t.Fatalf("got %q, want %q", content, want)
-	}
-	if _, err := os.Stat(file); !os.IsNotExist(err) {
-		t.Fatalf("the import file %s must be removed, got %v", file, err)
+	if out != dir {
+		t.Fatalf("fnox ran in %s, want %s", out, dir)
 	}
 }

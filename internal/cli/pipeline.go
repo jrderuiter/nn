@@ -96,6 +96,9 @@ type options struct {
 	// gitCommonDir finds the shared git directory of a linked worktree. Nil
 	// means ask git.
 	gitCommonDir func(ctx context.Context, dir string) (string, error)
+	// executable is the path of nn that a capture command calls. Empty means
+	// the running binary.
+	executable string
 	// goos is the platform that decides the trust flag. Empty means this one.
 	goos string
 	// getenv reads the host environment for the settings that are not tool
@@ -186,6 +189,12 @@ func prepare(opts options) (*prep, error) {
 	if commonDir == nil {
 		commonDir = gitCommonDir
 	}
+	self := opts.executable
+	if self == "" {
+		if self, err = os.Executable(); err != nil {
+			return nil, fmt.Errorf("find the nn binary: %w", err)
+		}
+	}
 
 	return &prep{
 		cfg: cfg,
@@ -202,6 +211,7 @@ func prepare(opts options) (*prep, error) {
 			GitCommonDir: func(ctx context.Context) (string, error) {
 				return commonDir(ctx, ws.Workdir)
 			},
+			Executable: self,
 		},
 		providers: providers,
 	}, nil
@@ -236,37 +246,30 @@ func resolver(cfg *config.Config, workdir string) *secrets.Resolver {
 // only when it uses fnox, because most runs never do.
 //
 // Normally fnox finds its own files. In a linked worktree, nn looks up the
-// fnox files with the same rule as nn.toml and nn.local.toml. When one comes
-// from the main checkout, nn names both files to fnox, the local file first so
-// that it wins. A [fnox] config setting turns the lookup off.
+// fnox files with the same rule as nn.toml and nn.local.toml. When one is only
+// in the main checkout, fnox runs in the matching directory of the main
+// checkout. fnox then searches there, the directories above included, and
+// reads the files of the main checkout instead of those of the worktree. A
+// [fnox] config setting turns the lookup off.
 func newResolver(cfg *config.Config, workdir string) (*secrets.Resolver, []string) {
 	r := secrets.NewResolver(cfg.Fnox.Binary, cfg.Fnox.Config, cfg.Fnox.Profile)
 	if cfg.Fnox.Config != "" {
 		return r, nil
 	}
-	project, projectFromMain := worktree.Lookup(workdir, fnoxFiles...)
-	var local string
-	var localFromMain bool
-	if project != "" {
-		local, localFromMain = worktree.Beside(filepath.Dir(project), fnoxLocalFiles...)
-		localFromMain = localFromMain || projectFromMain
-	} else {
-		local, localFromMain = worktree.Lookup(workdir, fnoxLocalFiles...)
-	}
+	_, projectFromMain := worktree.Lookup(workdir, fnoxFiles...)
+	_, localFromMain := worktree.Lookup(workdir, fnoxLocalFiles...)
 	if !projectFromMain && !localFromMain {
 		return r, nil
 	}
+	alt, ok := worktree.Main(workdir)
+	if !ok {
+		return r, nil
+	}
+	r.Dir = alt
 	var fromMain []string
-	for _, f := range []struct {
-		path string
-		main bool
-	}{{local, localFromMain}, {project, projectFromMain}} {
-		if f.path == "" {
-			continue
-		}
-		r.Imports = append(r.Imports, f.path)
-		if f.main {
-			fromMain = append(fromMain, f.path)
+	for _, names := range [][]string{fnoxLocalFiles, fnoxFiles} {
+		if p := worktree.Find(alt, names...); p != "" {
+			fromMain = append(fromMain, p)
 		}
 	}
 	return r, fromMain
@@ -328,6 +331,16 @@ func build(ctx context.Context, opts options, command []string) (*plan, error) {
 			gitCfg = append(gitCfg, r.GitConfig...)
 			gitCfgFrom = append(gitCfgFrom, providers[i].Name())
 		}
+	}
+	if n := m.Profile().Network; n != nil && (len(n.CustomCredentials) > 0 || len(n.AllowDomain) > 0) {
+		// git reads the proxy login from HTTPS_PROXY and, after a fetch,
+		// hands it to every credential helper. The macOS keychain helper
+		// fails in the sandbox and prints an error after each fetch. The
+		// proxy port changes on every run, so a reset for the proxy URL alone
+		// cannot match, and an empty value clears every helper instead. It
+		// comes first, so a helper that a tool sets still applies.
+		gitCfg = append([]tool.GitConfig{{Key: "credential.helper", Value: ""}}, gitCfg...)
+		gitCfgFrom = append([]string{"the nono proxy"}, gitCfgFrom...)
 	}
 	if len(gitCfg) > 0 {
 		if err := m.Add(gitConfigFragment(gitCfg), strings.Join(gitCfgFrom, ", ")); err != nil {

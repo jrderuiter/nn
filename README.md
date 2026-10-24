@@ -343,10 +343,11 @@ fnox set GITHUB_TOKEN --provider op
 
 In a linked git worktree, `nn` looks up `fnox.toml` and `fnox.local.toml` with
 the same rules as `nn.toml` and `nn.local.toml`. See
-[Git worktrees](#git-worktrees). If one of them comes from the main checkout,
-`nn` gives fnox exactly these two files, and `fnox.local.toml` wins. fnox then
-does not search for other files, such as a file for a profile. When you set
-`config` in the `[fnox]` section, `nn` does no lookup.
+[Git worktrees](#git-worktrees). If one of them is only in the main checkout,
+`nn` runs fnox in the same directory of the main checkout. fnox then reads the
+files of the main checkout and of the directories above it, but not the files
+of the worktree. When you set `config` in the `[fnox]` section, `nn` does no
+lookup.
 
 When you start an agent session, `nn` resolves the required secrets once on the
 host using `fnox get <key>`. Resolving up front is a deliberate security decision:
@@ -359,9 +360,17 @@ sandbox, and `nn` never writes secrets to disk. Instead, the agent sees a phanto
 token, which is a stand-in value. Nono's credential proxy intercepts outbound
 requests on the host and exchanges the phantom token for the real secret.
 
+When the proxy is in use, git in the sandbox uses no credential helper. Without
+this, git tries to store the proxy login in a helper such as the macOS keychain,
+and prints an error after each fetch.
+
 Kubernetes authentication is different: nono mints tokens dynamically with
 `kubectl create token` and renews them as they expire. This does not require
 approval and is not stored in fnox.
+
+A GitHub App works in a similar way. `nn` resolves the private key of the App
+once, at launch. nono then asks `nn` for a new installation token before the old
+one expires. A new token does not call fnox, so it does not ask for approval.
 
 ### Profile escape hatch
 
@@ -616,7 +625,10 @@ The `github` tool configures GitHub API and git access over HTTPS:
 
 | Key | Description |
 | --- | --- |
-| `secret` | Name of the fnox key holding your personal access token (required). |
+| `secret` | Name of the fnox key holding your personal access token, or the private key of the App when `app_id` is set (default: `GITHUB_TOKEN`, or `GITHUB_APP_PRIVATE_KEY` with an App). |
+| `app_id` | ID of a GitHub App. When you set it, `nn` uses tokens of the App instead of a personal access token. |
+| `installation_id` | ID of the App installation (found from the `github.com` git remote if omitted). |
+| `repositories` | Repository names that the App token is limited to (default: every repository of the installation). |
 | `git` | Enable git clone, fetch, and push over HTTPS (default: `true`). |
 | `rewrite_ssh` | Automatically rewrite SSH git remotes to HTTPS (default: `true`). |
 | `gh_cli` | Redirect GitHub CLI config and cache into `.nono/nn/` (default: `true`). |
@@ -625,6 +637,67 @@ The `github` tool configures GitHub API and git access over HTTPS:
 [tools.github]
 secret = "GITHUB_TOKEN"
 ```
+
+A GitHub App gives the agent a token that belongs to the App and not to you. The
+token expires after one hour, and it has only the permissions that you give the
+App. GitHub shows the work of the agent under the name of the App.
+
+To create the App, do these steps:
+
+1. Open the page for a new App. For your own account, go to
+   <https://github.com/settings/apps/new>. For an organization, go to
+   `https://github.com/organizations/<org>/settings/apps/new`.
+2. Type a name for the App, and a homepage URL. Any URL is accepted, for
+   example the URL of the repository.
+3. Under Webhook, clear Active. nn does not use webhooks.
+4. Under Repository permissions, set the access that the agent needs. The table
+   below shows a typical set.
+5. Under "Where can this GitHub App be installed?", select "Only on this
+   account".
+6. Click Create GitHub App.
+
+| Permission | Access | Why |
+| --- | --- | --- |
+| Contents | Read and write | Clone, fetch, and push |
+| Pull requests | Read and write | Open and update pull requests |
+| Issues | Read and write | Read and comment on issues |
+| Workflows | Read and write | Push changes to files in `.github/workflows` |
+| Metadata | Read | GitHub adds it to every App |
+
+Give only the permissions that the agent needs. For example, leave out Workflows
+if the agent must not change your CI.
+
+To connect the App to nn, do these steps:
+
+1. On the General page of the App, find the App ID. Write it down.
+2. At the bottom of the same page, click "Generate a private key". GitHub
+   downloads it as a `.pem` file.
+3. Store the key in fnox:
+   `fnox set GITHUB_APP_PRIVATE_KEY --from-file key.pem`.
+4. Delete the downloaded `.pem` file.
+5. Click Install App in the sidebar, and install the App on your account or
+   organization. Select the repositories that the agent can use.
+6. Set `app_id` in `nn.toml`.
+
+```toml
+[tools.github]
+app_id = "123456"
+repositories = ["widget"]
+```
+
+If you install the App on an organization, an owner of the organization must
+approve the installation.
+
+`nn` finds the installation from the `github.com` remote of the repository. If
+the repository has no such remote, or more than one, set `installation_id`. The
+ID is the number at the end of the URL of the installation settings page, for
+example `https://github.com/settings/installations/7890123`.
+
+The `repositories` setting limits each token to the named repositories. Without
+it, a token covers every repository that you selected in step 5.
+
+nono asks `nn` for a new token every 50 minutes. The private key stays in the
+environment of the nono process on the host. The sandbox never sees it.
 
 #### Azure DevOps
 

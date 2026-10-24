@@ -63,7 +63,7 @@ that profile refers to, and runs nono with it.
 	// the version apart from -v, which is verbose on nn run.
 	root.Flags().BoolP("version", "V", false, "version for nn")
 
-	root.AddCommand(newRunCmd(opts), newInitCmd(opts), newProfileCmd(opts), newDoctorCmd(opts), newExampleCmd())
+	root.AddCommand(newRunCmd(opts), newInitCmd(opts), newProfileCmd(opts), newDoctorCmd(opts), newExampleCmd(), newCredentialCmd())
 	return root
 }
 
