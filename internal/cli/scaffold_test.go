@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -12,10 +13,13 @@ import (
 	"github.com/jrderuiter/nn/internal/tool"
 )
 
+// noIdentity stands in for a machine where git has no user.name or user.email.
+func noIdentity(context.Context, string) (string, string) { return "", "" }
+
 // init in an empty project writes the example, and that file has to load.
 func TestEnsureConfigWritesTheExample(t *testing.T) {
 	dir := t.TempDir()
-	if err := ensureConfig(options{workdir: dir}); err != nil {
+	if err := ensureConfig(context.Background(), options{workdir: dir, gitIdentity: noIdentity}); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, config.FileName)
@@ -23,7 +27,7 @@ func TestEnsureConfigWritesTheExample(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected a generated %s: %v", config.FileName, err)
 	}
-	if string(got) != example() {
+	if string(got) != example(exampleValues{}) {
 		t.Errorf("expected the example, got:\n%s", got)
 	}
 	if _, err := config.Load(config.Options{Dir: dir, Explicit: path}); err != nil {
@@ -40,7 +44,7 @@ func TestEnsureConfigKeepsAnExistingFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureConfig(options{workdir: dir}); err != nil {
+	if err := ensureConfig(context.Background(), options{workdir: dir, gitIdentity: noIdentity}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(path)
@@ -63,7 +67,7 @@ func TestEnsureConfigLeavesASubdirectoryAlone(t *testing.T) {
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureConfig(options{workdir: sub}); err != nil {
+	if err := ensureConfig(context.Background(), options{workdir: sub, gitIdentity: noIdentity}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(sub, config.FileName)); err == nil {
@@ -76,13 +80,78 @@ func TestEnsureConfigLeavesASubdirectoryAlone(t *testing.T) {
 func TestEnsureConfigSkipsAnExplicitPath(t *testing.T) {
 	dir := t.TempDir()
 	named := filepath.Join(dir, "elsewhere.toml")
-	if err := ensureConfig(options{workdir: dir, configPath: named}); err != nil {
+	if err := ensureConfig(context.Background(), options{workdir: dir, configPath: named, gitIdentity: noIdentity}); err != nil {
 		t.Fatal(err)
 	}
 	for _, p := range []string{named, filepath.Join(dir, config.FileName)} {
 		if _, err := os.Stat(p); err == nil {
 			t.Errorf("--config must write nothing, but %s exists", p)
 		}
+	}
+}
+
+// The new file names the committer that git knows, and switches on the
+// sections given to --enable. Every section switched on must still load.
+func TestEnsureConfigFillsTheTemplate(t *testing.T) {
+	dir := t.TempDir()
+	o := options{
+		workdir: dir,
+		enable:  exampleSections(),
+		gitIdentity: func(context.Context, string) (string, string) {
+			return "Jane Doe", "jane@example.com"
+		},
+	}
+	if err := ensureConfig(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, config.FileName)
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(got)
+	for _, want := range []string{"name = \"Jane Doe\"\n", "email = \"jane@example.com\"\n"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("expected %q in the generated file", want)
+		}
+	}
+	for _, s := range exampleSections() {
+		if !strings.Contains(body, "\n["+s+"]\n") {
+			t.Errorf("section [%s] is not switched on", s)
+		}
+	}
+	cfg, err := config.Load(config.Options{Dir: dir, Explicit: path})
+	if err != nil {
+		t.Fatalf("the generated file must load: %v", err)
+	}
+	if _, err := tool.Build(cfg.Meta(), cfg.Tools); err != nil {
+		t.Fatalf("the generated tools must decode: %v", err)
+	}
+	if len(cfg.Agents) != 2 {
+		t.Errorf("expected both agents, got %v", cfg.Agents)
+	}
+}
+
+func TestEnsureConfigRejectsAnUnknownSection(t *testing.T) {
+	dir := t.TempDir()
+	o := options{workdir: dir, enable: []string{"tools.nope"}, gitIdentity: noIdentity}
+	if err := ensureConfig(context.Background(), o); err == nil || !strings.Contains(err.Error(), "tools.nope") {
+		t.Fatalf("expected an error that names tools.nope, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, config.FileName)); err == nil {
+		t.Error("an unknown section must write nothing")
+	}
+}
+
+// --enable has no effect on a file that exists, so it is an error there.
+func TestEnsureConfigRejectsEnableForAnExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, config.FileName), []byte("[nono]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	o := options{workdir: dir, enable: []string{"tools.github"}, gitIdentity: noIdentity}
+	if err := ensureConfig(context.Background(), o); err == nil {
+		t.Fatal("expected an error for --enable with an existing file")
 	}
 }
 
@@ -116,7 +185,7 @@ func TestRequireConfigFindsTheProjectFile(t *testing.T) {
 // The example is written by hand, so this test is what keeps it complete: a
 // new tool, or a new setting of one, must appear in its section.
 func TestExampleCoversEveryTool(t *testing.T) {
-	body := example()
+	body := example(exampleValues{})
 	section := func(name string) string {
 		head := "[tools." + name + "]"
 		i := strings.Index(body, head)

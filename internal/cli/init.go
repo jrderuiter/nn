@@ -16,6 +16,9 @@ func newInitCmd(opts *options) *cobra.Command {
 			"When the project has no nn.toml, init writes the example one first, and\n" +
 			"builds from that. An existing file is used as it is. Every other\n" +
 			"command needs that file, so init is how a project starts.\n\n" +
+			"The new file takes the committer identity from git. Pass --enable to\n" +
+			"switch sections on in it, for example:\n\n" +
+			"  nn init --enable agents.claude,tools.github,tools.mise\n\n" +
 			"init writes the shared profile. Pass --agent to write the profile of\n" +
 			"one agent instead.",
 		SilenceUsage: true,
@@ -23,7 +26,7 @@ func newInitCmd(opts *options) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			o := *opts
 			o.stderr = cmd.ErrOrStderr()
-			if err := ensureConfig(o); err != nil {
+			if err := ensureConfig(cmd.Context(), o); err != nil {
 				return err
 			}
 			p, err := build(cmd.Context(), o, nil)
@@ -41,5 +44,10 @@ func newInitCmd(opts *options) *cobra.Command {
 			return nil
 		},
 	}
+	c.Flags().StringSliceVar(&opts.enable, "enable", nil,
+		"switch these `sections` on in a new nn.toml, such as agents.claude or tools.github")
+	_ = c.RegisterFlagCompletionFunc("enable", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+		return exampleSections(), cobra.ShellCompDirectiveNoFileComp
+	})
 	return c
 }
