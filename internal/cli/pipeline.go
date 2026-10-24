@@ -87,6 +87,9 @@ type options struct {
 	banner      bool
 	diagnostics bool
 
+	// enable holds the sections that nn init writes switched on.
+	enable []string
+
 	// stderr receives warnings and the trace. Nil means os.Stderr.
 	stderr io.Writer
 	// gitRemotes lists the remote URLs of the repository in a directory. Nil
@@ -96,6 +99,9 @@ type options struct {
 	// gitCommonDir finds the shared git directory of a linked worktree. Nil
 	// means ask git.
 	gitCommonDir func(ctx context.Context, dir string) (string, error)
+	// gitIdentity reads the user name and email that nn init writes into
+	// [tools.git]. Nil means ask git.
+	gitIdentity func(ctx context.Context, dir string) (name, email string)
 	// executable is the path of nn that a capture command calls. Empty means
 	// the running binary.
 	executable string

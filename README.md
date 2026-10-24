@@ -74,6 +74,18 @@ nn init
 generates the sandbox files in `.nono/nn/`. If an `nn.toml` already exists, `nn
 init` leaves it unchanged and regenerates the sandbox files.
 
+The new `nn.toml` takes your name and email for `[tools.git]` from your git
+configuration. To switch sections on in the new file, name them with
+`--enable`:
+
+```
+nn init --enable agents.claude,tools.github,tools.mise
+```
+
+The names are the section names of `nn.toml`, such as `agents.claude`, `fnox`,
+or `tools.go`. The sections that you do not name stay commented out. If an
+`nn.toml` already exists, `nn init --enable` stops with an error.
+
 ### 2. Configure `nn.toml`
 
 Open `nn.toml` and configure the agent and tools you need. A minimal file with

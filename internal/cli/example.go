@@ -25,7 +25,7 @@ func newExampleCmd() *cobra.Command {
 		SilenceUsage: true,
 		Args:         cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			body := example()
+			body := example(exampleValues{})
 			if out == "" {
 				_, err := fmt.Fprint(cmd.OutOrStdout(), body)
 				return err
@@ -40,9 +40,42 @@ func newExampleCmd() *cobra.Command {
 	return c
 }
 
-func example() string {
+// exampleValues fill in the example. The zero value gives the placeholders,
+// with every optional section commented out.
+type exampleValues struct {
+	name  string
+	email string
+	// enable holds the sections, such as tools.github, that are written
+	// without the comment marker.
+	enable map[string]bool
+}
+
+// exampleSections lists the sections that nn init can turn on. tools.git is
+// always on, and is listed so that naming it is not an error.
+func exampleSections() []string {
+	out := []string{"agents.agy", "agents.claude", "fnox"}
+	for _, name := range tool.Known() {
+		out = append(out, "tools."+name)
+	}
+	return out
+}
+
+func example(v exampleValues) string {
+	if v.name == "" {
+		v.name = "Your Name"
+	}
+	if v.email == "" {
+		v.email = "you@example.com"
+	}
 	var b strings.Builder
 	p := func(format string, a ...any) { fmt.Fprintf(&b, format+"\n", a...) }
+	// c is the prefix of a line that is commented out unless its section is on.
+	c := func(section string) string {
+		if v.enable[section] {
+			return ""
+		}
+		return "# "
+	}
 
 	p("# nn configuration. Every value below can also come from the environment,")
 	p("# as NN_ plus the key path in upper case: NN_NONO_NETWORK_PROFILE,")
@@ -84,23 +117,23 @@ func example() string {
 	p("# adds the section to [nono], and its network_profile replaces the one")
 	p("# above. Any other command, such as kubectl, gets [nono] alone. Pull a")
 	p("# pack with nono pull before you extend it.")
-	p("# [agents.claude]")
-	p("# extends = [\"nolabs-ai/claude\"]")
-	p("# network_profile = \"claude-code\"")
+	p("%s[agents.claude]", c("agents.claude"))
+	p("%sextends = [\"nolabs-ai/claude\"]", c("agents.claude"))
+	p("%snetwork_profile = \"claude-code\"", c("agents.claude"))
 	p("#")
-	p("# [agents.agy]")
-	p("# extends = [\"nolabs-ai/antigravity\"]")
-	p("# allow_domain = [\"cloudcode-pa.googleapis.com\", \"oauth2.googleapis.com\"]")
+	p("%s[agents.agy]", c("agents.agy"))
+	p("%sextends = [\"nolabs-ai/antigravity\"]", c("agents.agy"))
+	p("%sallow_domain = [\"cloudcode-pa.googleapis.com\", \"oauth2.googleapis.com\"]", c("agents.agy"))
 	p("#")
 	p("# A raw profile fragment for one agent. agy starts a language server on a")
 	p("# random local port, which macOS picks from 49152 to 65535. The range keeps")
 	p("# out the fixed ports of local services, such as databases.")
-	p("# [agents.agy.profile.network]")
-	p("# open_port_range = [[49152, 65535]]")
+	p("%s[agents.agy.profile.network]", c("agents.agy"))
+	p("%sopen_port_range = [[49152, 65535]]", c("agents.agy"))
 	p("")
 	p("# Where secrets come from. nn never reads a secret itself: it tells nono to")
 	p("# run fnox on the host when the proxy needs one.")
-	p("# [fnox]")
+	p("%s[fnox]", c("fnox"))
 	p("# binary = \"fnox\"")
 	p("# config = \"fnox.toml\"")
 	p("# profile = \"production\"")
@@ -108,19 +141,19 @@ func example() string {
 	p("# Language runtimes and version managers. Each adds one nono group plus the")
 	p("# writable caches and variables that group leaves out. No settings.")
 	for _, name := range tool.Runtimes() {
-		p("# [tools.%s]", name)
+		p("%s[tools.%s]", c("tools."+name), name)
 	}
 	p("")
 	p("# mise, which has one setting.")
-	p("# [tools.mise]")
+	p("%s[tools.mise]", c("tools.mise"))
 	p("# Trust the mise.toml in the working directory, inside the sandbox only.")
 	p("# A new git worktree is not trusted, because mise trusts a file by its path.")
 	p("# trust_workdir = true")
 	p("")
 	p("[tools.git]")
 	p("# The committer identity inside the sandbox.")
-	p("name = \"Your Name\"")
-	p("email = \"you@example.com\"")
+	p("name = %q", v.name)
+	p("email = %q", v.email)
 	p("# Extra git hosts to allow.")
 	p("# hosts = [\"gitlab.com\"]")
 	p("# Grant read access to the host git configuration.")
@@ -131,8 +164,8 @@ func example() string {
 	p("")
 	p("# GitHub. Needs a fnox key holding the token. git access, the rewrite of")
 	p("# ssh remotes to HTTPS, and the gh redirect are all on unless turned off.")
-	p("# [tools.github]")
-	p("# secret = \"GITHUB_TOKEN\"")
+	p("%s[tools.github]", c("tools.github"))
+	p("%ssecret = \"GITHUB_TOKEN\"", c("tools.github"))
 	p("# A GitHub App in place of a personal access token. secret then names the")
 	p("# fnox key of the App private key, and defaults to GITHUB_APP_PRIVATE_KEY.")
 	p("# app_id = \"123456\"")
@@ -144,21 +177,21 @@ func example() string {
 	p("")
 	p("# Azure DevOps. Needs a fnox key holding a personal access token. ssh")
 	p("# remotes of the projects that this repository uses are rewritten to HTTPS.")
-	p("# [tools.azure_devops]")
+	p("%s[tools.azure_devops]", c("tools.azure_devops"))
 	p("# organization and project come from the remote when they are not set.")
 	p("# organization = \"your-org\"")
 	p("# project = \"Your Project\"   # the default project for az devops")
-	p("# secret = \"AZURE_DEVOPS_PAT\"")
+	p("%ssecret = \"AZURE_DEVOPS_PAT\"", c("tools.azure_devops"))
 	p("# projects = [\"Other Project\"]   # more projects to clone over ssh")
 	p("# rewrite_ssh = false   # leave ssh remotes alone, which breaks fetch")
 	p("# az_cli = false        # let az use the host configuration")
 	p("")
 	p("# Kubernetes clusters. nono mints a token on the host for a service")
 	p("# account that already exists; nn never creates accounts or RBAC.")
-	p("# [tools.kubernetes]")
-	p("# auth = \"service-account\"   # required; or \"host\" or \"in_cluster\"")
-	p("# context = \"prod\"")
-	p("# service_account = \"agent-reader\"")
+	p("%s[tools.kubernetes]", c("tools.kubernetes"))
+	p("%sauth = \"service-account\"   # required; or \"host\" or \"in_cluster\"", c("tools.kubernetes"))
+	p("%scontext = \"prod\"", c("tools.kubernetes"))
+	p("%sservice_account = \"agent-reader\"", c("tools.kubernetes"))
 	p("# service_account_namespace = \"agent-access\"   # default: default")
 	p("# token_ttl = \"1h\"")
 	p("# kubectl = \"/opt/homebrew/bin/kubectl\"   # a real binary, not a shim")
