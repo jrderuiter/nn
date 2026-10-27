@@ -38,7 +38,9 @@ import (
 // the defaults that every cluster shares.
 type Config struct {
 	// Auth picks how the sandbox authenticates, and has no default.
-	// "service-account" keeps every credential on the host. "host" copies the
+	// "service-account" keeps every credential on the host. "exec" runs the
+	// exec plugin of the context on the host, so the agent acts as the user
+	// without holding the token. "host" copies the
 	// credentials of the context into the sandbox, and exists for local test
 	// clusters. "in_cluster" uses the identity that the kubelet mounted into
 	// the pod that nn runs in. nn never detects a pod on its own, because a
@@ -100,6 +102,7 @@ const (
 	authServiceAccount = "service-account"
 	authHost           = "host"
 	authInCluster      = "in_cluster"
+	authExec           = "exec"
 )
 
 // routeName and tokenEnv are the names of the single cluster form. A named
@@ -139,8 +142,10 @@ type target struct {
 	// kubeconfig is the resolved host kubeconfig, set only when the
 	// configuration named one.
 	kubeconfig string
-	workdir    string
-	res        *resolved
+	// source is the host kubeconfig that was read, whether named or not.
+	source  string
+	workdir string
+	res     *resolved
 	// saDir is where a mounted service account would be. auth = "in_cluster"
 	// reads it. The other forms only ask whether it is there, to tell a
 	// missing kubeconfig apart from a pod that nobody configured.
@@ -173,6 +178,7 @@ func init() {
 	// The prototype describes the shape, not the defaults: it is only read for
 	// the field names the environment can set.
 	tool.Register("kubernetes", New, func() any { return &Config{} })
+	tool.RegisterCredential("kubernetes", credential)
 }
 
 func New(md toml.MetaData, prim toml.Primitive) (tool.Provider, error) {
@@ -292,7 +298,8 @@ func newTarget(cfg Cluster) (*target, error) {
 	case "":
 		return nil, fmt.Errorf("auth is required: set auth = %q to mint a token for service_account on the host, "+
 			"auth = %q to copy the context credentials into the sandbox, "+
-			"or auth = %q to use the identity of this pod", authServiceAccount, authHost, authInCluster)
+			"auth = %q to run the exec plugin of the context on the host, "+
+			"or auth = %q to use the identity of this pod", authServiceAccount, authHost, authExec, authInCluster)
 	case authInCluster:
 		return newInClusterTarget(cfg, ttl)
 	case authServiceAccount:
@@ -300,13 +307,14 @@ func newTarget(cfg Cluster) (*target, error) {
 			return nil, fmt.Errorf("auth %q needs service_account; set auth = %q to copy the "+
 				"context credentials into the sandbox instead", authServiceAccount, authHost)
 		}
-	case authHost:
+	case authHost, authExec:
 		if cfg.ServiceAccount != "" {
 			return nil, fmt.Errorf("auth %q uses the context credentials, so service_account %q would be ignored; "+
 				"remove one of them", authHost, cfg.ServiceAccount)
 		}
 	default:
-		return nil, fmt.Errorf("auth must be %q, %q or %q, got %q", authServiceAccount, authHost, authInCluster, cfg.Auth)
+		return nil, fmt.Errorf("auth must be %q, %q, %q or %q, got %q",
+			authServiceAccount, authHost, authExec, authInCluster, cfg.Auth)
 	}
 	for _, k := range []struct {
 		name string
@@ -452,12 +460,24 @@ func (p *target) resolve(e *tool.Env) error {
 	p.res = res
 	p.host = u.Host
 	p.workdir = e.Workdir
+	p.source = path
 	if p.cfg.Kubeconfig != "" {
 		p.kubeconfig = path
 	}
 
-	if p.cfg.Auth == authHost {
+	switch p.cfg.Auth {
+	case authHost:
 		return nil
+	case authExec:
+		plugin, err := execOf(res)
+		if err != nil {
+			return err
+		}
+		if plugin == nil {
+			return fmt.Errorf("auth is %q, but context %q has no exec plugin; set auth = %q or %q instead",
+				authExec, res.ContextName, authServiceAccount, authHost)
+		}
+		return p.checkCA()
 	}
 	p.kubectl, err = resolveKubectl(p.cfg.Kubectl)
 	if err != nil {
@@ -564,8 +584,14 @@ func (p *provider) Preflight(ctx context.Context, e *tool.Env) error {
 
 // probe mints one token, as nono will at launch.
 func (p *target) probe(ctx context.Context) error {
-	if p.cfg.Auth == authHost {
+	switch p.cfg.Auth {
+	case authHost:
 		return nil
+	case authExec:
+		probe, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		_, err := execToken(probe, p.source, p.res.ContextName, captureEnv())
+		return err
 	}
 	// Running the capture here turns a confusing runtime warning into a clear
 	// message. nono runs the same command later, with the same stripped
@@ -764,7 +790,7 @@ type part struct {
 	port   int
 }
 
-// buildProxy is the service-account form. kubectl talks to the real API
+// buildProxy is the service-account form, and the exec form. kubectl talks to the real API
 // server, and nono's proxy intercepts the connection, adds the bearer token
 // and verifies the cluster certificate on the far side. The token never
 // enters the sandbox.
@@ -795,7 +821,7 @@ func (p *target) buildProxy(e *tool.Env, kubeDir string) (*part, error) {
 		entry: proxyEntry(p.name(), p.res.Cluster.Server, p.cfg.ServiceAccountNamespace, p.tokenEnv),
 		route: &route,
 		capture: nono.CredentialCapture{
-			Command:      p.tokenCommand(captureKubeconfig),
+			Command:      p.captureCommand(e, captureKubeconfig),
 			TimeoutSecs:  30,
 			CacheTTLSecs: p.cacheTTLSecs(),
 		},
@@ -824,7 +850,7 @@ func (p *target) buildDirect() (*part, error) {
 	if _, isExec := p.res.User["exec"]; isExec {
 		return nil, fmt.Errorf(
 			"context %q authenticates with an exec plugin, which cannot run inside the sandbox; "+
-				"set auth = %q and service_account to use the proxy form instead", p.res.ContextName, authServiceAccount)
+				"set auth = %q to run it on the host instead", p.res.ContextName, authExec)
 	}
 	ca, err := p.caBytes()
 	if err != nil {
@@ -850,6 +876,15 @@ func (p *target) buildDirect() (*part, error) {
 		out.domain = hostOnly(p.host)
 	}
 	return out, nil
+}
+
+// captureCommand is the argv of the credential capture. The exec form runs
+// nn itself, because a plugin prints an ExecCredential, not a bare token.
+func (p *target) captureCommand(e *tool.Env, kubeconfig string) []string {
+	if p.cfg.Auth == authExec {
+		return []string{e.Executable, "credential", "kubernetes", "--kubeconfig", p.source, "--context", p.res.ContextName}
+	}
+	return p.tokenCommand(kubeconfig)
 }
 
 // tokenCommand is the argv nono runs on the host to get a token. It runs
@@ -883,6 +918,12 @@ func (p *target) tokenCommand(kubeconfig string) []string {
 // cacheTTLSecs keeps the cached token comfortably inside its own lifetime, so
 // a cached value never outlives the token it holds.
 func (p *target) cacheTTLSecs() int {
+	if p.cfg.Auth == authExec {
+		// nn cannot read the lifetime of a plugin token in advance, and a
+		// plugin may return a cached token close to its end. A plugin keeps
+		// its own cache, so a run each minute is cheap.
+		return 60
+	}
 	if p.inCluster() && !p.mints() {
 		// token_ttl describes a token that nn asks for. nn cannot read the
 		// lifetime of the kubelet token, so it reads the file again each
