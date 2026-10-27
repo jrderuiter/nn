@@ -1,0 +1,4 @@
+[tools.kubernetes]
+auth = "exec"
+kubeconfig = "kubeconfig.yaml"
+context = "gke_project_europe-west4_dev"

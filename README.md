@@ -365,7 +365,8 @@ this, git tries to store the proxy login in a helper such as the macOS keychain,
 and prints an error after each fetch.
 
 Kubernetes authentication is different: nono mints tokens dynamically with
-`kubectl create token` and renews them as they expire. This does not require
+`kubectl create token`, or gets them from the exec plugin of the context, and
+renews them as they expire. This does not require
 approval and is not stored in fnox.
 
 A GitHub App works in a similar way. `nn` resolves the private key of the App
@@ -732,8 +733,8 @@ nono's credential proxy:
 
 | Key | Description |
 | --- | --- |
-| `auth` | Authentication mode: `"service-account"`, `"host"` or `"in_cluster"` (required). |
-| `context` | Context name from your host kubeconfig (required for `host`, optional for `service-account`). |
+| `auth` | Authentication mode: `"service-account"`, `"exec"`, `"host"` or `"in_cluster"` (required). |
+| `context` | Context name from your host kubeconfig (default: the current context). |
 | `service_account` | Name of the service account to mint tokens for (required for `service-account`, optional for `in_cluster`). |
 | `service_account_namespace` | Namespace of the service account (default: `"default"`, or the namespace of the pod for `in_cluster`). |
 | `token_ttl` | Lifetime of minted service account tokens (default: `"1h"`). |
@@ -757,6 +758,28 @@ context                   = "prod-eks"
 service_account           = "agent-reader"
 service_account_namespace = "apps"
 ```
+
+**Exec mode (clusters that use an exec plugin):**
+Many cloud clusters authenticate with an exec plugin, for example
+`gke-gcloud-auth-plugin`, `aws eks get-token` or `kubelogin`. An exec plugin is
+a program that kubectl runs to get a token. In this mode, nono runs the plugin
+of the context on the host and injects its token through the proxy:
+
+```toml
+[tools.kubernetes]
+auth    = "exec"
+context = "gke_my-project_europe-west4_dev"
+```
+
+The agent acts as you, with all of your permissions on the cluster. The token
+does not enter the sandbox, but the agent can use it through the proxy for the
+whole session. If you want the agent to have fewer permissions, use the service
+account mode.
+
+nono runs the plugin again each minute that the agent uses the cluster. Most
+plugins keep their own cache, so this is fast. The plugin runs without a
+terminal. If your cloud login expires, log in again on the host, for example
+with `gcloud auth login`.
 
 **Host mode (local clusters only):**
 Copies context credentials (such as client certificates) directly into the
